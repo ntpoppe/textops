@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\TextOps.Contracts\TextOps.Contracts.csproj" />
+  </ItemGroup>
+
 </Project>
