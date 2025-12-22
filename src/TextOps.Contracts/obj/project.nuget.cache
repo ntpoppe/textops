@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "a7u5LpFi8TY=",
+  "success": true,
+  "projectFilePath": "/home/n/repos/textops/src/TextOps.Contracts/TextOps.Contracts.csproj",
+  "expectedPackageFiles": [
+    "/home/n/.nuget/packages/microsoft.aspnetcore.app.ref/10.0.0/microsoft.aspnetcore.app.ref.10.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}
