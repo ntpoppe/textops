@@ -10,4 +10,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TextOps.Contracts\TextOps.Contracts.csproj" />
+    <ProjectReference Include="..\TextOps.Orchestrator\TextOps.Orchestrator.csproj" />
+  </ItemGroup>
 </Project>

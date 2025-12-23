@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using TextOps.Channels.DevApi.Dtos;
-using TextOps.Contracts.Intents;
+using TextOps.Channels.DevApi.Execution;
 using TextOps.Contracts.Messaging;
 using TextOps.Orchestrator.Orchestration;
 using TextOps.Orchestrator.Parsing;
@@ -13,11 +13,16 @@ public sealed class DevInboundController : ControllerBase
 {
     private readonly IIntentParser _parser;
     private readonly IRunOrchestrator _orchestrator;
+    private readonly IExecutionDispatcher _executionDispatcher;
 
-    public DevInboundController(IIntentParser parser, IRunOrchestrator orchestrator)
+    public DevInboundController(
+        IIntentParser parser,
+        IRunOrchestrator orchestrator,
+        IExecutionDispatcher executionDispatcher)
     {
         _parser = parser;
         _orchestrator = orchestrator;
+        _executionDispatcher = executionDispatcher;
     }
 
     [HttpPost("inbound")]
@@ -57,6 +62,12 @@ public sealed class DevInboundController : ControllerBase
         // Parse intent and handle
         var intent = _parser.Parse(inbound.Body);
         var result = _orchestrator.HandleInbound(inbound, intent);
+
+        // Enqueue execution dispatch if present
+        if (result.Dispatch != null)
+        {
+            _executionDispatcher.Enqueue(result.Dispatch);
+        }
 
         // Map to response DTO
         var response = new DevInboundResponse

@@ -33,7 +33,8 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
             return new OrchestratorResult(
                 RunId: null,
                 Outbound: Array.Empty<OutboundMessage>(),
-                DispatchedExecution: false
+                DispatchedExecution: false,
+                Dispatch: null
             );
         }
 
@@ -101,7 +102,7 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
             IdempotencyKey: $"approval-request:{runId}"
         );
 
-        return new OrchestratorResult(runId, new[] { outbound }, DispatchedExecution: false);
+        return new OrchestratorResult(runId, new[] { outbound }, DispatchedExecution: false, Dispatch: null);
     }
 
     private OrchestratorResult HandleApprove(InboundMessage msg, ParsedIntent intent)
@@ -135,7 +136,8 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
             IdempotencyKey: $"approved-starting:{run.RunId}"
         );
 
-        return new OrchestratorResult(run.RunId, new[] { outbound }, DispatchedExecution: true);
+        var dispatch = new ExecutionDispatch(run.RunId, run.JobKey);
+        return new OrchestratorResult(run.RunId, new[] { outbound }, DispatchedExecution: true, Dispatch: dispatch);
     }
 
     private OrchestratorResult HandleDeny(InboundMessage msg, ParsedIntent intent)
@@ -194,6 +196,120 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
     }
 
     // ------------------------
+    // Execution Callbacks
+    // ------------------------
+
+    public OrchestratorResult OnExecutionStarted(string runId, string workerId)
+    {
+        if (!_runs.TryGetValue(runId, out var run))
+        {
+            // Run not found - return error message
+            var errorOutbound = new OutboundMessage(
+                ChannelId: "system",
+                Conversation: new ConversationId("system"),
+                To: null,
+                Body: $"Error: Cannot start execution for unknown run {runId}.",
+                CorrelationId: runId,
+                IdempotencyKey: $"execution-started-error:{runId}"
+            );
+            return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+        }
+
+        // Idempotency: if already Running, treat as no-op
+        if (run.Status == RunStatus.Running)
+        {
+            return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
+        }
+
+        // Only transition if in Dispatching state
+        if (run.Status != RunStatus.Dispatching)
+        {
+            var errorOutbound = new OutboundMessage(
+                ChannelId: run.ChannelId,
+                Conversation: new ConversationId(run.ConversationId),
+                To: null,
+                Body: $"Cannot start run {runId} in state {run.Status}.",
+                CorrelationId: runId,
+                IdempotencyKey: $"execution-started-error-state:{runId}"
+            );
+            return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+
+        // Transition: Dispatching -> Running
+        run = run with { Status = RunStatus.Running };
+        _runs[run.RunId] = run;
+
+        Append(run.RunId, "ExecutionStarted", now, $"worker:{workerId}", new { WorkerId = workerId });
+
+        return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
+    }
+
+    public OrchestratorResult OnExecutionCompleted(string runId, bool success, string summary)
+    {
+        if (!_runs.TryGetValue(runId, out var run))
+        {
+            // Run not found - return error message
+            var errorOutbound = new OutboundMessage(
+                ChannelId: "system",
+                Conversation: new ConversationId("system"),
+                To: null,
+                Body: $"Error: Cannot complete execution for unknown run {runId}.",
+                CorrelationId: runId,
+                IdempotencyKey: $"execution-completed-error:{runId}"
+            );
+            return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+        }
+
+        // Idempotency: if already in terminal state, treat as no-op
+        if (run.Status == RunStatus.Succeeded || run.Status == RunStatus.Failed)
+        {
+            return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
+        }
+
+        // Allow completion from Running or Dispatching (robustness: handle missed started event)
+        if (run.Status != RunStatus.Running && run.Status != RunStatus.Dispatching)
+        {
+            var errorOutbound = new OutboundMessage(
+                ChannelId: run.ChannelId,
+                Conversation: new ConversationId(run.ConversationId),
+                To: null,
+                Body: $"Cannot complete run {runId} in state {run.Status}.",
+                CorrelationId: runId,
+                IdempotencyKey: $"execution-completed-error-state:{runId}"
+            );
+            return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var newStatus = success ? RunStatus.Succeeded : RunStatus.Failed;
+        var eventType = success ? "ExecutionSucceeded" : "ExecutionFailed";
+
+        // Transition to terminal state
+        run = run with { Status = newStatus };
+        _runs[run.RunId] = run;
+
+        Append(run.RunId, eventType, now, "worker", new { Summary = summary });
+
+        // Emit completion message to original conversation
+        var messageBody = success
+            ? $"Run {runId} succeeded: {summary}"
+            : $"Run {runId} failed: {summary}";
+
+        var completionOutbound = new OutboundMessage(
+            ChannelId: run.ChannelId,
+            Conversation: new ConversationId(run.ConversationId),
+            To: null,
+            Body: messageBody,
+            CorrelationId: runId,
+            IdempotencyKey: $"execution-completed:{runId}"
+        );
+
+        return new OrchestratorResult(runId, new[] { completionOutbound }, DispatchedExecution: false, Dispatch: null);
+    }
+
+    // ------------------------
     // Helpers
     // ------------------------
 
@@ -208,7 +324,7 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
             IdempotencyKey: $"reply:{InboxKey(msg.ChannelId, msg.ProviderMessageId)}"
         );
 
-        return new OrchestratorResult(runId, new[] { outbound }, DispatchedExecution: false);
+        return new OrchestratorResult(runId, new[] { outbound }, DispatchedExecution: false, Dispatch: null);
     }
 
     private void Append(string runId, string type, DateTimeOffset at, string actor, object payload)

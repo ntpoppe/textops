@@ -1,26 +1,47 @@
+using TextOps.Contracts.Intents;
 using TextOps.Contracts.Messaging;
+using TextOps.Orchestrator.Orchestration;
+using TextOps.Orchestrator.Parsing;
 
 namespace TextOps.Orchestrator.Tests.Orchestration;
 
 internal static class TestHelpers
 {
     public static InboundMessage CreateInboundMessage(
-        string channelId = "dev",
-        string providerMessageId = "msg-1",
-        string body = "test",
-        Address? from = null,
-        ConversationId? conversation = null)
+        string body,
+        string? providerMessageId = null,
+        string from = "dev:user1",
+        string conversation = "dev:conv:user1",
+        string channelId = "dev")
     {
         return new InboundMessage(
             ChannelId: channelId,
-            ProviderMessageId: providerMessageId,
-            Conversation: conversation ?? new ConversationId("conv-1"),
-            From: from ?? new Address("sms:+15551234567"),
+            ProviderMessageId: providerMessageId ?? Guid.NewGuid().ToString("n"),
+            Conversation: new ConversationId(conversation),
+            From: new Address(from),
             To: null,
             Body: body,
             ReceivedAt: DateTimeOffset.UtcNow,
             ProviderMeta: null
         );
+    }
+
+    public static ParsedIntent Parse(IIntentParser parser, InboundMessage inbound)
+    {
+        return parser.Parse(inbound.Body);
+    }
+
+    public static string ExtractRunIdFromResult(OrchestratorResult result)
+    {
+        if (result.RunId == null)
+            throw new InvalidOperationException("Result has no RunId");
+        return result.RunId;
+    }
+
+    public static string[] GetEventTypes(IRunOrchestrator orchestrator, string runId)
+    {
+        var timeline = orchestrator.GetTimeline(runId);
+        return timeline.Events.Select(e => e.Type).ToArray();
     }
 }
 

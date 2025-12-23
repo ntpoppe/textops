@@ -5,5 +5,6 @@ namespace TextOps.Orchestrator.Orchestration;
 public sealed record OrchestratorResult(
     string? RunId,
     IReadOnlyList<OutboundMessage> Outbound,
-    bool DispatchedExecution
+    bool DispatchedExecution,
+    ExecutionDispatch? Dispatch = null
 );

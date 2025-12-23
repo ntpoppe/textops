@@ -1,8 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
+using TextOps.Channels.DevApi.Execution;
 using TextOps.Orchestrator.Orchestration;
 using TextOps.Orchestrator.Parsing;
+using TextOps.Worker.Stub;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,6 +35,20 @@ builder.Services.AddControllers()
 // Register orchestrator and parser as singletons for in-memory state persistence
 builder.Services.AddSingleton<IRunOrchestrator, InMemoryRunOrchestrator>();
 builder.Services.AddSingleton<IIntentParser, DeterministicIntentParser>();
+
+// Register execution queue and dispatcher
+builder.Services.AddSingleton<InMemoryExecutionQueue>();
+builder.Services.AddSingleton<IExecutionDispatcher>(sp => sp.GetRequiredService<InMemoryExecutionQueue>());
+
+// Register worker executor
+builder.Services.AddSingleton<IWorkerExecutor>(sp =>
+{
+    var orchestrator = sp.GetRequiredService<IRunOrchestrator>();
+    return new StubWorkerExecutor(orchestrator);
+});
+
+// Register execution hosted service
+builder.Services.AddHostedService<ExecutionHostedService>();
 
 var app = builder.Build();
 
