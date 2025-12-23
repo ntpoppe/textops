@@ -28,6 +28,10 @@ public sealed class DeterministicIntentParser : IIntentParser
     private static readonly Regex RunRegex =
         new(@"^run\s+(?<job>[a-zA-Z0-9\-_]+)$", RegexOptions.IgnoreCase);
 
+    // Matches "run" without job key - orchestrator will validate and return error
+    private static readonly Regex RunWithoutJobRegex =
+        new(@"^run\s*$", RegexOptions.IgnoreCase);
+
     // Matches commands like: "yes 8f3a" or "approve 123-abc" => run: 8f3a or 123-abc
     private static readonly Regex ApproveRegex =
         new(@"^(yes|approve)\s+(?<run>[a-zA-Z0-9\-_]+)$", RegexOptions.IgnoreCase);
@@ -59,6 +63,16 @@ public sealed class DeterministicIntentParser : IIntentParser
                 IntentType.RunJob,
                 input,
                 JobKey: run.Groups["job"].Value,
+                RunId: null
+            );
+        }
+
+        if (RunWithoutJobRegex.Match(input) is { Success: true })
+        {
+            return new ParsedIntent(
+                IntentType.RunJob,
+                input,
+                JobKey: null,
                 RunId: null
             );
         }

@@ -488,3 +488,5 @@ $RECYCLE.BIN/
 src/**/obj/
 src/**/bin/
 src/**/cache/
+
+.cursorrules
