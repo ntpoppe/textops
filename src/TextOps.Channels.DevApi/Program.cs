@@ -1,7 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
-using TextOps.Channels.DevApi.Execution;
+using TextOps.Contracts.Execution;
+using TextOps.Execution;
 using TextOps.Orchestrator.Orchestration;
 using TextOps.Orchestrator.Parsing;
 using TextOps.Worker.Stub;
@@ -36,9 +37,10 @@ builder.Services.AddControllers()
 builder.Services.AddSingleton<IRunOrchestrator, InMemoryRunOrchestrator>();
 builder.Services.AddSingleton<IIntentParser, DeterministicIntentParser>();
 
-// Register execution queue and dispatcher
+// Register execution queue, dispatcher, and reader
 builder.Services.AddSingleton<InMemoryExecutionQueue>();
 builder.Services.AddSingleton<IExecutionDispatcher>(sp => sp.GetRequiredService<InMemoryExecutionQueue>());
+builder.Services.AddSingleton<IExecutionQueueReader>(sp => sp.GetRequiredService<InMemoryExecutionQueue>());
 
 // Register worker executor
 builder.Services.AddSingleton<IWorkerExecutor>(sp =>

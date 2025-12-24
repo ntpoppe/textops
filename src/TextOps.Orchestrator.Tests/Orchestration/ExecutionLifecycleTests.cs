@@ -32,7 +32,7 @@ public sealed class ExecutionLifecycleTests
 
         // Act: execute lifecycle
         _orchestrator.OnExecutionStarted(runId, "worker-1");
-        var completionResult = _orchestrator.OnExecutionCompleted(runId, success: true, summary: "ok");
+        var completionResult = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok");
 
         // Assert: terminal state and events
         var timeline = _orchestrator.GetTimeline(runId);
@@ -71,7 +71,7 @@ public sealed class ExecutionLifecycleTests
 
         // Act: execute lifecycle with failure
         _orchestrator.OnExecutionStarted(runId, "worker-1");
-        var completionResult = _orchestrator.OnExecutionCompleted(runId, success: false, summary: "boom");
+        var completionResult = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: false, summary: "boom");
 
         // Assert: terminal state and events
         var timeline = _orchestrator.GetTimeline(runId);
@@ -105,7 +105,7 @@ public sealed class ExecutionLifecycleTests
         Assert.That(timelineBefore.Run.Status, Is.EqualTo(RunStatus.Dispatching));
 
         // Act: complete without started (robustness: handle missed started event)
-        var completionResult = _orchestrator.OnExecutionCompleted(runId, success: true, summary: "ok");
+        var completionResult = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok");
 
         // Assert: transitions to terminal state
         var timeline = _orchestrator.GetTimeline(runId);
@@ -143,7 +143,7 @@ public sealed class ExecutionLifecycleTests
     public void OnExecutionCompleted_UnknownRunId_ReturnsErrorOutbound()
     {
         // Act
-        var result = _orchestrator.OnExecutionCompleted("NOPE", success: true, summary: "ok");
+        var result = _orchestrator.OnExecutionCompleted("NOPE", "worker-1", success: true, summary: "ok");
 
         // Assert: returns error message, no exception
         Assert.Multiple(() =>
@@ -164,7 +164,7 @@ public sealed class ExecutionLifecycleTests
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         // Act: try to complete from AwaitingApproval
-        var result = _orchestrator.OnExecutionCompleted(runId, success: true, summary: "ok");
+        var result = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok");
 
         // Assert: error message, state unchanged
         Assert.Multiple(() =>

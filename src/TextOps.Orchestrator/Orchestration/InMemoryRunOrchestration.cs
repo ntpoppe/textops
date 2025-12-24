@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using TextOps.Contracts.Execution;
 using TextOps.Contracts.Intents;
 using TextOps.Contracts.Messaging;
 using TextOps.Contracts.Runs;
@@ -115,29 +116,29 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
         if (!_runs.TryGetValue(runId, out var run))
             return Reply(msg, runId: null, $"Unknown run id: {runId}");
 
-        if (run.Status != RunStatus.AwaitingApproval)
-            return Reply(msg, runId: run.RunId, $"Cannot approve run {run.RunId} in state {run.Status}.");
+        // Atomic state transition: AwaitingApproval -> Dispatching
+        // This prevents race conditions where two concurrent approvals both succeed
+        var newRun = run with { Status = RunStatus.Dispatching };
+        if (!TryTransition(runId, run, newRun, RunStatus.AwaitingApproval, out var currentStatus))
+        {
+            return Reply(msg, runId: run.RunId, $"Cannot approve run {run.RunId} in state {currentStatus}.");
+        }
 
         var now = DateTimeOffset.UtcNow;
-
-        // Transition: AwaitingApproval -> Dispatching
-        run = run with { Status = RunStatus.Dispatching };
-        _runs[run.RunId] = run;
-
-        Append(run.RunId, "RunApproved", now, ActorFrom(msg), new { });
-        Append(run.RunId, "ExecutionDispatched", now, "system", new { });
+        Append(newRun.RunId, "RunApproved", now, ActorFrom(msg), new { });
+        Append(newRun.RunId, "ExecutionDispatched", now, "system", new { });
 
         var outbound = new OutboundMessage(
-            ChannelId: run.ChannelId,
-            Conversation: new ConversationId(run.ConversationId),
+            ChannelId: newRun.ChannelId,
+            Conversation: new ConversationId(newRun.ConversationId),
             To: null,
-            Body: $"Approved. Starting run {run.RunId} for job \"{run.JobKey}\"…",
-            CorrelationId: run.RunId,
-            IdempotencyKey: $"approved-starting:{run.RunId}"
+            Body: $"Approved. Starting run {newRun.RunId} for job \"{newRun.JobKey}\"…",
+            CorrelationId: newRun.RunId,
+            IdempotencyKey: $"approved-starting:{newRun.RunId}"
         );
 
-        var dispatch = new ExecutionDispatch(run.RunId, run.JobKey);
-        return new OrchestratorResult(run.RunId, new[] { outbound }, DispatchedExecution: true, Dispatch: dispatch);
+        var dispatch = new ExecutionDispatch(newRun.RunId, newRun.JobKey);
+        return new OrchestratorResult(newRun.RunId, new[] { outbound }, DispatchedExecution: true, Dispatch: dispatch);
     }
 
     private OrchestratorResult HandleDeny(InboundMessage msg, ParsedIntent intent)
@@ -150,17 +151,17 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
         if (!_runs.TryGetValue(runId, out var run))
             return Reply(msg, runId: null, $"Unknown run id: {runId}");
 
-        if (run.Status != RunStatus.AwaitingApproval)
-            return Reply(msg, runId: run.RunId, $"Cannot deny run {run.RunId} in state {run.Status}.");
+        // Atomic state transition: AwaitingApproval -> Denied
+        var newRun = run with { Status = RunStatus.Denied };
+        if (!TryTransition(runId, run, newRun, RunStatus.AwaitingApproval, out var currentStatus))
+        {
+            return Reply(msg, runId: run.RunId, $"Cannot deny run {run.RunId} in state {currentStatus}.");
+        }
 
         var now = DateTimeOffset.UtcNow;
+        Append(newRun.RunId, "RunDenied", now, ActorFrom(msg), new { });
 
-        run = run with { Status = RunStatus.Denied };
-        _runs[run.RunId] = run;
-
-        Append(run.RunId, "RunDenied", now, ActorFrom(msg), new { });
-
-        return Reply(msg, runId: run.RunId, $"Denied run {run.RunId} for job \"{run.JobKey}\".");
+        return Reply(msg, runId: newRun.RunId, $"Denied run {newRun.RunId} for job \"{newRun.JobKey}\".");
     }
 
     private OrchestratorResult HandleStatus(InboundMessage msg, ParsedIntent intent)
@@ -215,20 +216,22 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
             return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
         }
 
-        // Idempotency: if already Running, treat as no-op
-        if (run.Status == RunStatus.Running)
+        // Atomic state transition: Dispatching -> Running
+        var newRun = run with { Status = RunStatus.Running };
+        if (!TryTransition(runId, run, newRun, RunStatus.Dispatching, out var currentStatus))
         {
-            return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
-        }
+            // Idempotency: if already Running, treat as no-op
+            if (currentStatus == RunStatus.Running)
+            {
+                return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
+            }
 
-        // Only transition if in Dispatching state
-        if (run.Status != RunStatus.Dispatching)
-        {
+            // Invalid state - return error
             var errorOutbound = new OutboundMessage(
                 ChannelId: run.ChannelId,
                 Conversation: new ConversationId(run.ConversationId),
                 To: null,
-                Body: $"Cannot start run {runId} in state {run.Status}.",
+                Body: $"Cannot start run {runId} in state {currentStatus}.",
                 CorrelationId: runId,
                 IdempotencyKey: $"execution-started-error-state:{runId}"
             );
@@ -236,17 +239,12 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
         }
 
         var now = DateTimeOffset.UtcNow;
-
-        // Transition: Dispatching -> Running
-        run = run with { Status = RunStatus.Running };
-        _runs[run.RunId] = run;
-
-        Append(run.RunId, "ExecutionStarted", now, $"worker:{workerId}", new { WorkerId = workerId });
+        Append(newRun.RunId, "ExecutionStarted", now, $"worker:{workerId}", new { WorkerId = workerId });
 
         return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
     }
 
-    public OrchestratorResult OnExecutionCompleted(string runId, bool success, string summary)
+    public OrchestratorResult OnExecutionCompleted(string runId, string workerId, bool success, string summary)
     {
         if (!_runs.TryGetValue(runId, out var run))
         {
@@ -262,20 +260,25 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
             return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
         }
 
-        // Idempotency: if already in terminal state, treat as no-op
-        if (run.Status == RunStatus.Succeeded || run.Status == RunStatus.Failed)
-        {
-            return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
-        }
+        var newStatus = success ? RunStatus.Succeeded : RunStatus.Failed;
+        var newRun = run with { Status = newStatus };
 
-        // Allow completion from Running or Dispatching (robustness: handle missed started event)
-        if (run.Status != RunStatus.Running && run.Status != RunStatus.Dispatching)
+        // Atomic state transition: Running or Dispatching -> Terminal
+        // Try from Running first, then from Dispatching
+        if (!TryTransitionFromMultiple(runId, run, newRun, new[] { RunStatus.Running, RunStatus.Dispatching }, out var currentStatus))
         {
+            // Idempotency: if already in terminal state, treat as no-op
+            if (currentStatus == RunStatus.Succeeded || currentStatus == RunStatus.Failed)
+            {
+                return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
+            }
+
+            // Invalid state - return error
             var errorOutbound = new OutboundMessage(
                 ChannelId: run.ChannelId,
                 Conversation: new ConversationId(run.ConversationId),
                 To: null,
-                Body: $"Cannot complete run {runId} in state {run.Status}.",
+                Body: $"Cannot complete run {runId} in state {currentStatus}.",
                 CorrelationId: runId,
                 IdempotencyKey: $"execution-completed-error-state:{runId}"
             );
@@ -283,14 +286,8 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
         }
 
         var now = DateTimeOffset.UtcNow;
-        var newStatus = success ? RunStatus.Succeeded : RunStatus.Failed;
         var eventType = success ? "ExecutionSucceeded" : "ExecutionFailed";
-
-        // Transition to terminal state
-        run = run with { Status = newStatus };
-        _runs[run.RunId] = run;
-
-        Append(run.RunId, eventType, now, "worker", new { Summary = summary });
+        Append(newRun.RunId, eventType, now, $"worker:{workerId}", new { WorkerId = workerId, Summary = summary });
 
         // Emit completion message to original conversation
         var messageBody = success
@@ -298,8 +295,8 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
             : $"Run {runId} failed: {summary}";
 
         var completionOutbound = new OutboundMessage(
-            ChannelId: run.ChannelId,
-            Conversation: new ConversationId(run.ConversationId),
+            ChannelId: newRun.ChannelId,
+            Conversation: new ConversationId(newRun.ConversationId),
             To: null,
             Body: messageBody,
             CorrelationId: runId,
@@ -307,6 +304,78 @@ public sealed class InMemoryRunOrchestrator : IRunOrchestrator
         );
 
         return new OrchestratorResult(runId, new[] { completionOutbound }, DispatchedExecution: false, Dispatch: null);
+    }
+
+    // ------------------------
+    // Atomic State Transitions
+    // ------------------------
+
+    /// <summary>
+    /// Atomically transitions a run from expectedState to newRun.Status.
+    /// Returns true if the transition succeeded, false otherwise.
+    /// On failure, currentStatus contains the actual current status.
+    /// </summary>
+    private bool TryTransition(string runId, Run expectedRun, Run newRun, RunStatus expectedState, out RunStatus currentStatus)
+    {
+        // Verify expected state matches
+        if (expectedRun.Status != expectedState)
+        {
+            currentStatus = expectedRun.Status;
+            return false;
+        }
+
+        // Attempt atomic compare-and-swap
+        // ConcurrentDictionary.TryUpdate compares by value for records
+        if (_runs.TryUpdate(runId, newRun, expectedRun))
+        {
+            currentStatus = newRun.Status;
+            return true;
+        }
+
+        // Swap failed - another thread modified the run
+        // Re-read to get current status
+        if (_runs.TryGetValue(runId, out var current))
+        {
+            currentStatus = current.Status;
+        }
+        else
+        {
+            // Run was deleted (shouldn't happen in normal operation)
+            currentStatus = expectedRun.Status;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Atomically transitions a run from any of the expected states to newRun.Status.
+    /// Returns true if the transition succeeded, false otherwise.
+    /// </summary>
+    private bool TryTransitionFromMultiple(string runId, Run expectedRun, Run newRun, RunStatus[] expectedStates, out RunStatus currentStatus)
+    {
+        // Check if current state is one of the expected states
+        if (!expectedStates.Contains(expectedRun.Status))
+        {
+            currentStatus = expectedRun.Status;
+            return false;
+        }
+
+        // Attempt atomic compare-and-swap
+        if (_runs.TryUpdate(runId, newRun, expectedRun))
+        {
+            currentStatus = newRun.Status;
+            return true;
+        }
+
+        // Swap failed - re-read to get current status
+        if (_runs.TryGetValue(runId, out var current))
+        {
+            currentStatus = current.Status;
+        }
+        else
+        {
+            currentStatus = expectedRun.Status;
+        }
+        return false;
     }
 
     // ------------------------

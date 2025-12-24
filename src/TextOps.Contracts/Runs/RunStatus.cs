@@ -3,10 +3,22 @@ namespace TextOps.Contracts.Runs;
 /// <summary>
 /// The authoritative lifecycle state of a run.
 /// </summary>
+/// <remarks>
+/// Current MVP state machine:
+///   AwaitingApproval -> Dispatching -> Running -> Succeeded/Failed
+///   AwaitingApproval -> Denied
+///
+/// Reserved statuses for future use:
+///   - Created: Initial transient state before approval request (not persisted)
+///   - Approved: For multi-stage approval workflows
+///   - Canceled: For user-initiated cancellation
+///   - TimedOut: For approval/execution timeout policies
+/// </remarks>
 public enum RunStatus
 {
     /// <summary>
-    /// The run has been created but not yet submitted for approval.
+    /// Reserved for future use: Initial transient state before approval request.
+    /// Currently, runs transition directly to AwaitingApproval on creation.
     /// </summary>
     Created = 0,
 
@@ -16,7 +28,8 @@ public enum RunStatus
     AwaitingApproval = 1,
 
     /// <summary>
-    /// The run has been approved and is ready to execute.
+    /// Reserved for future use: Multi-stage approval workflows.
+    /// Currently, approval transitions directly to Dispatching.
     /// </summary>
     Approved = 2,
 
@@ -46,12 +59,12 @@ public enum RunStatus
     Denied = 7,
 
     /// <summary>
-    /// The run was canceled before completion.
+    /// Reserved for future use: User-initiated cancellation.
     /// </summary>
     Canceled = 8,
 
     /// <summary>
-    /// The run exceeded its timeout limit.
+    /// Reserved for future use: Approval or execution timeout policies.
     /// </summary>
     TimedOut = 9
 }

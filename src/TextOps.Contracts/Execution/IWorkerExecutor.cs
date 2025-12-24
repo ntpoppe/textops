@@ -1,6 +1,4 @@
-using TextOps.Orchestrator.Orchestration;
-
-namespace TextOps.Worker.Stub;
+namespace TextOps.Contracts.Execution;
 
 /// <summary>
 /// Executes work and reports results back to the orchestrator.

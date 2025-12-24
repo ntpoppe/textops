@@ -1,6 +1,6 @@
-using TextOps.Orchestrator.Orchestration;
+using TextOps.Contracts.Execution;
 
-namespace TextOps.Channels.DevApi.Execution;
+namespace TextOps.Execution;
 
 /// <summary>
 /// Dispatches execution requests to workers.
@@ -12,4 +12,3 @@ public interface IExecutionDispatcher
     /// </summary>
     void Enqueue(ExecutionDispatch dispatch);
 }
-

@@ -66,11 +66,11 @@ public sealed class ExecutionIdempotencyTests
         _orchestrator.OnExecutionStarted(runId, "worker-1");
 
         // Act: call OnExecutionCompleted twice
-        var result1 = _orchestrator.OnExecutionCompleted(runId, success: true, summary: "ok");
+        var result1 = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok");
         var eventTypes1 = TestHelpers.GetEventTypes(_orchestrator, runId);
         var terminalEventCount1 = eventTypes1.Count(e => e == "ExecutionSucceeded" || e == "ExecutionFailed");
 
-        var result2 = _orchestrator.OnExecutionCompleted(runId, success: true, summary: "ok again");
+        var result2 = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok again");
 
         // Assert: only one terminal event, status remains terminal
         var timeline = _orchestrator.GetTimeline(runId);
@@ -102,10 +102,10 @@ public sealed class ExecutionIdempotencyTests
         _orchestrator.OnExecutionStarted(runId, "worker-1");
 
         // Act: complete with success first, then try failure
-        _orchestrator.OnExecutionCompleted(runId, success: true, summary: "succeeded");
+        _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "succeeded");
         var timeline1 = _orchestrator.GetTimeline(runId);
 
-        _orchestrator.OnExecutionCompleted(runId, success: false, summary: "failed");
+        _orchestrator.OnExecutionCompleted(runId, "worker-1", success: false, summary: "failed");
 
         // Assert: first completion wins, status remains Succeeded
         var timeline2 = _orchestrator.GetTimeline(runId);

@@ -1,3 +1,4 @@
+using TextOps.Contracts.Execution;
 using TextOps.Orchestrator.Orchestration;
 
 namespace TextOps.Worker.Stub;
@@ -32,7 +33,7 @@ public sealed class StubWorkerExecutor : IWorkerExecutor
             : $"Job '{dispatch.JobKey}' failed (simulated failure)";
 
         // Report execution completed
-        var result = _orchestrator.OnExecutionCompleted(dispatch.RunId, success, summary);
+        var result = _orchestrator.OnExecutionCompleted(dispatch.RunId, WorkerId, success, summary);
 
         return result;
     }

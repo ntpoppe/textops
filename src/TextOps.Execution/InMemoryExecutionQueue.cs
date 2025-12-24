@@ -1,12 +1,13 @@
+using System.Runtime.CompilerServices;
 using System.Threading.Channels;
-using TextOps.Orchestrator.Orchestration;
+using TextOps.Contracts.Execution;
 
-namespace TextOps.Channels.DevApi.Execution;
+namespace TextOps.Execution;
 
 /// <summary>
 /// In-memory execution queue using System.Threading.Channels.
 /// </summary>
-public sealed class InMemoryExecutionQueue : IExecutionDispatcher
+public sealed class InMemoryExecutionQueue : IExecutionDispatcher, IExecutionQueueReader
 {
     private readonly Channel<ExecutionDispatch> _channel;
 
@@ -24,6 +25,11 @@ public sealed class InMemoryExecutionQueue : IExecutionDispatcher
         _channel.Writer.TryWrite(dispatch);
     }
 
-    public ChannelReader<ExecutionDispatch> Reader => _channel.Reader;
+    public async IAsyncEnumerable<ExecutionDispatch> ReadAllAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var dispatch in _channel.Reader.ReadAllAsync(cancellationToken))
+        {
+            yield return dispatch;
+        }
+    }
 }
-

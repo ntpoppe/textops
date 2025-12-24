@@ -1,4 +1,4 @@
-namespace TextOps.Orchestrator.Orchestration;
+namespace TextOps.Contracts.Execution;
 
 /// <summary>
 /// Represents a request to execute a job run.
