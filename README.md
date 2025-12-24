@@ -39,11 +39,11 @@ TextOps is a human-governed job orchestration platform that enables users to run
 
 - **Persistence**: All state is in-memory; restart loses all runs/events
 - **Real Messaging Channels**: Twilio SMS, Telegram, Slack adapters not yet built
-- **Message Broker**: Using in-process queue; RabbitMQ not integrated
+- **Distributed Queue**: Using in-process queue; database-backed queue not integrated
 - **Job Catalog**: Job keys are free-form strings; no schema/versioning/policies
 - **Scheduler**: No cron/recurring job support
 - **Authentication/Authorization**: Dev mode only; no user identity or permissions
-- **Multi-Instance**: Single instance only; would require shared storage/broker
+- **Multi-Instance**: Single instance only; would require shared storage
 
 ---
 
@@ -323,16 +323,17 @@ curl -X POST http://localhost:5048/dev/inbound \
 - Use EF Core or Dapper with append-only event table
 - Consider event sourcing pattern for full replay capability
 
-### 2. Message Broker (RabbitMQ)
+### 2. Distributed Workers (Database Queue)
 
 **Current**: In-process `System.Threading.Channels` queue.
 
 **Plan**:
-- Replace `InMemoryExecutionQueue` with RabbitMQ exchange/queue
-- Commands: `ExecutionDispatch` messages
-- Events: `RunEvent` publication (for external consumers)
-- Dead Letter Queue (DLQ) for failed executions
+- Add `ExecutionQueue` table to database
+- Workers poll with `FOR UPDATE SKIP LOCKED` (PostgreSQL)
+- Workers run as separate processes
+- Stale lock recovery for crashed workers
 - Retry policies with exponential backoff
+- No external message broker needed (database is sufficient for this volume)
 
 ### 3. Real Channel Adapters
 
