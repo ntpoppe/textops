@@ -1,5 +1,5 @@
 using TextOps.Contracts.Execution;
-using TextOps.Orchestrator.Orchestration;
+using TextOps.Contracts.Orchestration;
 
 namespace TextOps.Worker.Stub;
 

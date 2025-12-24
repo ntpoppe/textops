@@ -2,17 +2,24 @@ using System.Collections.Concurrent;
 using TextOps.Contracts.Execution;
 using TextOps.Contracts.Intents;
 using TextOps.Contracts.Messaging;
+using TextOps.Contracts.Orchestration;
 using TextOps.Contracts.Runs;
 
 namespace TextOps.Orchestrator.Orchestration;
 
 /// <summary>
-/// Step 4 MVP orchestrator:
-/// - Enforces approval gating + simple state transitions
-/// - Append-only RunEvent timeline
-/// - Idempotent inbound handling via (ChannelId, ProviderMessageId)
-/// - Produces OutboundMessage effects (does not send) and a dispatch signal (bool)
+/// In-memory implementation of <see cref="IRunOrchestrator"/>.
 /// </summary>
+/// <remarks>
+/// <para>Responsibilities:</para>
+/// <list type="bullet">
+/// <item><description>Enforces approval gating and state transitions</description></item>
+/// <item><description>Maintains append-only RunEvent timeline</description></item>
+/// <item><description>Idempotent inbound handling via (ChannelId, ProviderMessageId)</description></item>
+/// <item><description>Produces OutboundMessage effects (does not send) and dispatch signals</description></item>
+/// </list>
+/// <para>Future: Replace with a persistent implementation backed by a database.</para>
+/// </remarks>
 public sealed class InMemoryRunOrchestrator : IRunOrchestrator
 {
     // Inbox idempotency: key = "<channelId>:<providerMessageId>"

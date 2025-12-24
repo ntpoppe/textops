@@ -1,8 +1,8 @@
 using TextOps.Contracts.Execution;
 using TextOps.Contracts.Intents;
 using TextOps.Contracts.Messaging;
-using TextOps.Orchestrator.Orchestration;
-using TextOps.Orchestrator.Parsing;
+using TextOps.Contracts.Orchestration;
+using TextOps.Contracts.Parsing;
 
 namespace TextOps.Orchestrator.Tests.Orchestration;
 

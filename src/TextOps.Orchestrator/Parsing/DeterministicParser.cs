@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using TextOps.Contracts.Intents;
+using TextOps.Contracts.Parsing;
 
 namespace TextOps.Orchestrator.Parsing;
 

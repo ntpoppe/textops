@@ -489,4 +489,4 @@ src/**/obj/
 src/**/bin/
 src/**/cache/
 
-.cursorrules
+AGENTS.md

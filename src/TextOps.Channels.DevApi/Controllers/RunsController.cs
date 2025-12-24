@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using TextOps.Channels.DevApi.Dtos;
-using TextOps.Orchestrator.Orchestration;
+using TextOps.Contracts.Orchestration;
 
 namespace TextOps.Channels.DevApi.Controllers;
 

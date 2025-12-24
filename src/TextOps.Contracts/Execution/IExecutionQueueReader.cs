@@ -1,6 +1,4 @@
-using TextOps.Contracts.Execution;
-
-namespace TextOps.Execution;
+namespace TextOps.Contracts.Execution;
 
 /// <summary>
 /// Reads execution dispatch requests from a queue.

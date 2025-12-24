@@ -1,6 +1,4 @@
-using TextOps.Contracts.Execution;
-
-namespace TextOps.Execution;
+namespace TextOps.Contracts.Execution;
 
 /// <summary>
 /// Dispatches execution requests to workers.
@@ -12,3 +10,4 @@ public interface IExecutionDispatcher
     /// </summary>
     void Enqueue(ExecutionDispatch dispatch);
 }
+

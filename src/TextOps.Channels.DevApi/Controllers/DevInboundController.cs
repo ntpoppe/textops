@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using TextOps.Channels.DevApi.Dtos;
+using TextOps.Contracts.Execution;
 using TextOps.Contracts.Messaging;
-using TextOps.Execution;
-using TextOps.Orchestrator.Orchestration;
-using TextOps.Orchestrator.Parsing;
+using TextOps.Contracts.Orchestration;
+using TextOps.Contracts.Parsing;
 
 namespace TextOps.Channels.DevApi.Controllers;
 
