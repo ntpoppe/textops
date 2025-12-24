@@ -17,6 +17,7 @@
     <ProjectReference Include="..\TextOps.Execution\TextOps.Execution.csproj" />
     <ProjectReference Include="..\TextOps.Orchestrator\TextOps.Orchestrator.csproj" />
     <ProjectReference Include="..\TextOps.Worker.Stub\TextOps.Worker.Stub.csproj" />
+    <ProjectReference Include="..\TextOps.Persistence\TextOps.Persistence.csproj" />
   </ItemGroup>
 
 </Project>

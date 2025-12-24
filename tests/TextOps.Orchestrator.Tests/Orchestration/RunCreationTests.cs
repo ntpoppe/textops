@@ -1,31 +1,17 @@
-using TextOps.Contracts.Intents;
-using TextOps.Contracts.Parsing;
 using TextOps.Contracts.Runs;
-using TextOps.Orchestrator.Orchestration;
-using TextOps.Orchestrator.Parsing;
 
 namespace TextOps.Orchestrator.Tests.Orchestration;
 
 [TestFixture]
-public class RunCreationTests
+public class RunCreationTests : OrchestratorTestBase
 {
-    private InMemoryRunOrchestrator _orchestrator = null!;
-    private DeterministicIntentParser _parser = null!;
-
-    [SetUp]
-    public void SetUp()
-    {
-        _orchestrator = new InMemoryRunOrchestrator();
-        _parser = new DeterministicIntentParser();
-    }
-
     [Test]
     public void HandleInbound_RunJob_CreatesRunWithAwaitingApprovalStatus()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-{Guid.NewGuid()}");
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = Orchestrator.HandleInbound(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -34,7 +20,7 @@ public class RunCreationTests
             Assert.That(result.DispatchedExecution, Is.False);
         });
 
-        var timeline = _orchestrator.GetTimeline(result.RunId!);
+        var timeline = Orchestrator.GetTimeline(result.RunId!);
         Assert.Multiple(() =>
         {
             Assert.That(timeline.Run.JobKey, Is.EqualTo("demo"));
@@ -48,9 +34,9 @@ public class RunCreationTests
     public void HandleInbound_RunJob_ReturnsApprovalPrompt()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-prompt-{Guid.NewGuid()}");
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = Orchestrator.HandleInbound(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -68,11 +54,11 @@ public class RunCreationTests
     public void HandleInbound_RunJob_AppendsRunCreatedAndApprovalRequestedEvents()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-events-{Guid.NewGuid()}");
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = Orchestrator.HandleInbound(msg, intent);
 
-        var timeline = _orchestrator.GetTimeline(result.RunId!);
+        var timeline = Orchestrator.GetTimeline(result.RunId!);
         Assert.Multiple(() =>
         {
             Assert.That(timeline.Events, Has.Count.EqualTo(2));
@@ -87,9 +73,9 @@ public class RunCreationTests
     public void HandleInbound_RunJobWithMissingJobKey_ReturnsError()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "run", providerMessageId: $"create-error-{Guid.NewGuid()}");
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = Orchestrator.HandleInbound(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -100,4 +86,3 @@ public class RunCreationTests
         });
     }
 }
-

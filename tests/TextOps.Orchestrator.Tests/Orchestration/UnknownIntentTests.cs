@@ -1,30 +1,15 @@
-using TextOps.Contracts.Intents;
-using TextOps.Contracts.Parsing;
-using TextOps.Orchestrator.Orchestration;
-using TextOps.Orchestrator.Parsing;
-
 namespace TextOps.Orchestrator.Tests.Orchestration;
 
 [TestFixture]
-public class UnknownIntentTests
+public class UnknownIntentTests : OrchestratorTestBase
 {
-    private InMemoryRunOrchestrator _orchestrator = null!;
-    private DeterministicIntentParser _parser = null!;
-
-    [SetUp]
-    public void SetUp()
-    {
-        _orchestrator = new InMemoryRunOrchestrator();
-        _parser = new DeterministicIntentParser();
-    }
-
     [Test]
     public void HandleInbound_UnknownIntent_ReturnsHelpMessage()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "junk input", providerMessageId: $"unknown-{Guid.NewGuid()}");
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = Orchestrator.HandleInbound(msg, intent);
 
         var outbound = result.Outbound[0];
         Assert.Multiple(() =>
@@ -39,4 +24,3 @@ public class UnknownIntentTests
         });
     }
 }
-

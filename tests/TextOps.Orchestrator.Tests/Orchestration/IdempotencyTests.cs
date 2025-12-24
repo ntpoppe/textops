@@ -1,23 +1,8 @@
-using TextOps.Contracts.Intents;
-using TextOps.Contracts.Parsing;
-using TextOps.Orchestrator.Orchestration;
-using TextOps.Orchestrator.Parsing;
-
 namespace TextOps.Orchestrator.Tests.Orchestration;
 
 [TestFixture]
-public class IdempotencyTests
+public class IdempotencyTests : OrchestratorTestBase
 {
-    private InMemoryRunOrchestrator _orchestrator = null!;
-    private DeterministicIntentParser _parser = null!;
-
-    [SetUp]
-    public void SetUp()
-    {
-        _orchestrator = new InMemoryRunOrchestrator();
-        _parser = new DeterministicIntentParser();
-    }
-
     [Test]
     public void HandleInbound_SameChannelIdAndProviderMessageIdTwice_SecondProducesNoEffects()
     {
@@ -26,15 +11,15 @@ public class IdempotencyTests
             providerMessageId: "msg-123",
             body: "run demo");
 
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
         // First call
-        var result1 = _orchestrator.HandleInbound(msg, intent);
+        var result1 = Orchestrator.HandleInbound(msg, intent);
         var runId1 = result1.RunId;
-        var eventCount1 = _orchestrator.GetTimeline(runId1!).Events.Count;
+        var eventCount1 = Orchestrator.GetTimeline(runId1!).Events.Count;
 
         // Second call with same (ChannelId, ProviderMessageId)
-        var result2 = _orchestrator.HandleInbound(msg, intent);
+        var result2 = Orchestrator.HandleInbound(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -44,7 +29,7 @@ public class IdempotencyTests
         });
 
         // Verify no duplicate events
-        var timeline = _orchestrator.GetTimeline(runId1!);
+        var timeline = Orchestrator.GetTimeline(runId1!);
         Assert.That(timeline.Events.Count, Is.EqualTo(eventCount1));
     }
 
@@ -56,19 +41,19 @@ public class IdempotencyTests
             providerMessageId: "msg-123",
             body: "run demo");
 
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
         // First call
-        var result1 = _orchestrator.HandleInbound(msg, intent);
+        var result1 = Orchestrator.HandleInbound(msg, intent);
         var runId1 = result1.RunId;
 
         // Second call with same (ChannelId, ProviderMessageId)
-        var result2 = _orchestrator.HandleInbound(msg, intent);
+        var result2 = Orchestrator.HandleInbound(msg, intent);
 
         Assert.That(result2.RunId, Is.Null);
 
         // Verify only one run exists
-        var timeline = _orchestrator.GetTimeline(runId1!);
+        var timeline = Orchestrator.GetTimeline(runId1!);
         Assert.That(timeline.Run.JobKey, Is.EqualTo("demo"));
     }
 
@@ -85,11 +70,11 @@ public class IdempotencyTests
             providerMessageId: "msg-2",
             body: "run demo");
 
-        var intent1 = _parser.Parse(msg1.Body);
-        var intent2 = _parser.Parse(msg2.Body);
+        var intent1 = Parser.Parse(msg1.Body);
+        var intent2 = Parser.Parse(msg2.Body);
 
-        var result1 = _orchestrator.HandleInbound(msg1, intent1);
-        var result2 = _orchestrator.HandleInbound(msg2, intent2);
+        var result1 = Orchestrator.HandleInbound(msg1, intent1);
+        var result2 = Orchestrator.HandleInbound(msg2, intent2);
 
         Assert.Multiple(() =>
         {
@@ -112,11 +97,11 @@ public class IdempotencyTests
             providerMessageId: "msg-123",
             body: "run demo");
 
-        var intent1 = _parser.Parse(msg1.Body);
-        var intent2 = _parser.Parse(msg2.Body);
+        var intent1 = Parser.Parse(msg1.Body);
+        var intent2 = Parser.Parse(msg2.Body);
 
-        var result1 = _orchestrator.HandleInbound(msg1, intent1);
-        var result2 = _orchestrator.HandleInbound(msg2, intent2);
+        var result1 = Orchestrator.HandleInbound(msg1, intent1);
+        var result2 = Orchestrator.HandleInbound(msg2, intent2);
 
         Assert.Multiple(() =>
         {
@@ -134,8 +119,8 @@ public class IdempotencyTests
             channelId: "dev",
             providerMessageId: "create-1",
             body: "run demo");
-        var createIntent = _parser.Parse(createMsg.Body);
-        var createResult = _orchestrator.HandleInbound(createMsg, createIntent);
+        var createIntent = Parser.Parse(createMsg.Body);
+        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
         var runId = createResult.RunId!;
 
         // Approve with message ID
@@ -143,14 +128,14 @@ public class IdempotencyTests
             channelId: "dev",
             providerMessageId: "approve-1",
             body: $"yes {runId}");
-        var approveIntent = _parser.Parse(approveMsg.Body);
+        var approveIntent = Parser.Parse(approveMsg.Body);
 
         // First approval
-        var result1 = _orchestrator.HandleInbound(approveMsg, approveIntent);
-        var eventCount1 = _orchestrator.GetTimeline(runId).Events.Count;
+        var result1 = Orchestrator.HandleInbound(approveMsg, approveIntent);
+        var eventCount1 = Orchestrator.GetTimeline(runId).Events.Count;
 
         // Second approval with same message ID (should be idempotent)
-        var result2 = _orchestrator.HandleInbound(approveMsg, approveIntent);
+        var result2 = Orchestrator.HandleInbound(approveMsg, approveIntent);
 
         Assert.Multiple(() =>
         {
@@ -160,8 +145,7 @@ public class IdempotencyTests
         });
 
         // Verify no duplicate events
-        var timeline = _orchestrator.GetTimeline(runId);
+        var timeline = Orchestrator.GetTimeline(runId);
         Assert.That(timeline.Events.Count, Is.EqualTo(eventCount1));
     }
 }
-

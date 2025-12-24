@@ -1,46 +1,33 @@
-using TextOps.Contracts.Parsing;
 using TextOps.Contracts.Runs;
-using TextOps.Orchestrator.Orchestration;
-using TextOps.Orchestrator.Parsing;
 
 namespace TextOps.Orchestrator.Tests.Orchestration;
 
 [TestFixture]
-public sealed class ExecutionIdempotencyTests
+public sealed class ExecutionIdempotencyTests : OrchestratorTestBase
 {
-    private InMemoryRunOrchestrator _orchestrator = null!;
-    private DeterministicIntentParser _parser = null!;
-
-    [SetUp]
-    public void SetUp()
-    {
-        _orchestrator = new InMemoryRunOrchestrator();
-        _parser = new DeterministicIntentParser();
-    }
-
     [Test]
     public void OnExecutionStarted_CalledTwice_OnlyOneExecutionStartedEvent()
     {
         // Arrange: create and approve run (now in Dispatching)
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "m1");
-        var createIntent = TestHelpers.Parse(_parser, createMsg);
-        var createResult = _orchestrator.HandleInbound(createMsg, createIntent);
+        var createIntent = TestHelpers.Parse(Parser, createMsg);
+        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "m2");
-        var approveIntent = TestHelpers.Parse(_parser, approveMsg);
-        _orchestrator.HandleInbound(approveMsg, approveIntent);
+        var approveIntent = TestHelpers.Parse(Parser, approveMsg);
+        Orchestrator.HandleInbound(approveMsg, approveIntent);
 
         // Act: call OnExecutionStarted twice
-        var result1 = _orchestrator.OnExecutionStarted(runId, "worker-1");
-        var eventTypes1 = TestHelpers.GetEventTypes(_orchestrator, runId);
+        var result1 = Orchestrator.OnExecutionStarted(runId, "worker-1");
+        var eventTypes1 = TestHelpers.GetEventTypes(Orchestrator, runId);
         var eventCount1 = eventTypes1.Length;
 
-        var result2 = _orchestrator.OnExecutionStarted(runId, "worker-2");
+        var result2 = Orchestrator.OnExecutionStarted(runId, "worker-2");
 
         // Assert: only one ExecutionStarted event, status remains Running
-        var timeline = _orchestrator.GetTimeline(runId);
-        var eventTypes2 = TestHelpers.GetEventTypes(_orchestrator, runId);
+        var timeline = Orchestrator.GetTimeline(runId);
+        var eventTypes2 = TestHelpers.GetEventTypes(Orchestrator, runId);
 
         Assert.Multiple(() =>
         {
@@ -56,26 +43,26 @@ public sealed class ExecutionIdempotencyTests
     {
         // Arrange: get run into Running state
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "m1");
-        var createIntent = TestHelpers.Parse(_parser, createMsg);
-        var createResult = _orchestrator.HandleInbound(createMsg, createIntent);
+        var createIntent = TestHelpers.Parse(Parser, createMsg);
+        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "m2");
-        var approveIntent = TestHelpers.Parse(_parser, approveMsg);
-        _orchestrator.HandleInbound(approveMsg, approveIntent);
+        var approveIntent = TestHelpers.Parse(Parser, approveMsg);
+        Orchestrator.HandleInbound(approveMsg, approveIntent);
 
-        _orchestrator.OnExecutionStarted(runId, "worker-1");
+        Orchestrator.OnExecutionStarted(runId, "worker-1");
 
         // Act: call OnExecutionCompleted twice
-        var result1 = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok");
-        var eventTypes1 = TestHelpers.GetEventTypes(_orchestrator, runId);
+        var result1 = Orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok");
+        var eventTypes1 = TestHelpers.GetEventTypes(Orchestrator, runId);
         var terminalEventCount1 = eventTypes1.Count(e => e == "ExecutionSucceeded" || e == "ExecutionFailed");
 
-        var result2 = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok again");
+        var result2 = Orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok again");
 
         // Assert: only one terminal event, status remains terminal
-        var timeline = _orchestrator.GetTimeline(runId);
-        var eventTypes2 = TestHelpers.GetEventTypes(_orchestrator, runId);
+        var timeline = Orchestrator.GetTimeline(runId);
+        var eventTypes2 = TestHelpers.GetEventTypes(Orchestrator, runId);
         var terminalEventCount2 = eventTypes2.Count(e => e == "ExecutionSucceeded" || e == "ExecutionFailed");
 
         Assert.Multiple(() =>
@@ -92,25 +79,25 @@ public sealed class ExecutionIdempotencyTests
     {
         // Arrange: get run into Running state
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "m1");
-        var createIntent = TestHelpers.Parse(_parser, createMsg);
-        var createResult = _orchestrator.HandleInbound(createMsg, createIntent);
+        var createIntent = TestHelpers.Parse(Parser, createMsg);
+        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "m2");
-        var approveIntent = TestHelpers.Parse(_parser, approveMsg);
-        _orchestrator.HandleInbound(approveMsg, approveIntent);
+        var approveIntent = TestHelpers.Parse(Parser, approveMsg);
+        Orchestrator.HandleInbound(approveMsg, approveIntent);
 
-        _orchestrator.OnExecutionStarted(runId, "worker-1");
+        Orchestrator.OnExecutionStarted(runId, "worker-1");
 
         // Act: complete with success first, then try failure
-        _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "succeeded");
-        var timeline1 = _orchestrator.GetTimeline(runId);
+        Orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "succeeded");
+        var timeline1 = Orchestrator.GetTimeline(runId);
 
-        _orchestrator.OnExecutionCompleted(runId, "worker-1", success: false, summary: "failed");
+        Orchestrator.OnExecutionCompleted(runId, "worker-1", success: false, summary: "failed");
 
         // Assert: first completion wins, status remains Succeeded
-        var timeline2 = _orchestrator.GetTimeline(runId);
-        var eventTypes = TestHelpers.GetEventTypes(_orchestrator, runId);
+        var timeline2 = Orchestrator.GetTimeline(runId);
+        var eventTypes = TestHelpers.GetEventTypes(Orchestrator, runId);
 
         Assert.Multiple(() =>
         {
@@ -125,16 +112,16 @@ public sealed class ExecutionIdempotencyTests
     {
         // Arrange: send same message twice
         var msg = TestHelpers.CreateInboundMessage("run demo", "m1");
-        var intent = TestHelpers.Parse(_parser, msg);
+        var intent = TestHelpers.Parse(Parser, msg);
 
         // Act: first call
-        var result1 = _orchestrator.HandleInbound(msg, intent);
+        var result1 = Orchestrator.HandleInbound(msg, intent);
         var runId1 = result1.RunId;
-        var eventTypes1 = runId1 != null ? TestHelpers.GetEventTypes(_orchestrator, runId1) : Array.Empty<string>();
+        var eventTypes1 = runId1 != null ? TestHelpers.GetEventTypes(Orchestrator, runId1) : Array.Empty<string>();
         var runCreatedCount1 = eventTypes1.Count(e => e == "RunCreated");
 
         // Second call with same providerMessageId
-        var result2 = _orchestrator.HandleInbound(msg, intent);
+        var result2 = Orchestrator.HandleInbound(msg, intent);
 
         // Assert: second call produces no effects
         Assert.Multiple(() =>
@@ -146,11 +133,10 @@ public sealed class ExecutionIdempotencyTests
         // Verify only one RunCreated event exists
         if (runId1 != null)
         {
-            var eventTypes2 = TestHelpers.GetEventTypes(_orchestrator, runId1);
+            var eventTypes2 = TestHelpers.GetEventTypes(Orchestrator, runId1);
             var runCreatedCount2 = eventTypes2.Count(e => e == "RunCreated");
             Assert.That(runCreatedCount2, Is.EqualTo(1), "Should have exactly one RunCreated event");
             Assert.That(runCreatedCount2, Is.EqualTo(runCreatedCount1), "Event count should not change");
         }
     }
 }
-
