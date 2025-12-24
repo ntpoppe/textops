@@ -63,10 +63,10 @@ public sealed class DatabaseExecutionQueue : IExecutionQueue
         
         var now = DateTimeOffset.UtcNow;
         
-        // Find oldest pending entry
+        // Find oldest pending entry 
         var entry = await _db.ExecutionQueue
             .Where(e => e.Status == "pending")
-            .OrderBy(e => e.CreatedAt)
+            .OrderBy(e => e.Id)
             .FirstOrDefaultAsync(ct);
 
         if (entry == null)
@@ -143,19 +143,24 @@ public sealed class DatabaseExecutionQueue : IExecutionQueue
     {
         var threshold = DateTimeOffset.UtcNow - lockTimeout;
         
-        var staleEntries = await _db.ExecutionQueue
-            .Where(e => e.Status == "processing" && e.LockedAt < threshold)
+        var processingEntries = await _db.ExecutionQueue
+            .Where(e => e.Status == "processing")
             .ToListAsync(ct);
+
+        var staleEntries = processingEntries
+            .Where(e => e.LockedAt.HasValue && e.LockedAt.Value < threshold)
+            .ToList();
 
         foreach (var entry in staleEntries)
         {
+            var previousWorker = entry.LockedBy;
             entry.Status = "pending";
             entry.LockedAt = null;
             entry.LockedBy = null;
             
             _logger.LogWarning(
                 "Reclaimed stale dispatch: QueueId={QueueId}, RunId={RunId}, PreviousWorker={Worker}",
-                entry.Id, entry.RunId, entry.LockedBy);
+                entry.Id, entry.RunId, previousWorker);
         }
 
         if (staleEntries.Count > 0)

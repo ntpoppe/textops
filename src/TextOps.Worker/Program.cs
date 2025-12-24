@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using TextOps.Contracts.Execution;
 using TextOps.Contracts.Orchestration;
 using TextOps.Orchestrator.Orchestration;
@@ -16,17 +17,18 @@ builder.Services.Configure<WorkerOptions>(
 // Configure persistence (same as DevApi)
 var persistenceProvider = builder.Configuration.GetValue<string>("Persistence:Provider") ?? "Sqlite";
 var connectionStrings = builder.Configuration.GetSection("Persistence:ConnectionStrings");
+string dbConnStr;
 
 if (persistenceProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
 {
-    var connStr = connectionStrings.GetValue<string>("Postgres")
+    dbConnStr = connectionStrings.GetValue<string>("Postgres")
         ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
-    builder.Services.AddTextOpsPostgres(connStr);
+    builder.Services.AddTextOpsPostgres(dbConnStr);
 }
 else
 {
-    var connStr = connectionStrings.GetValue<string>("Sqlite") ?? "Data Source=textops.db";
-    builder.Services.AddTextOpsSqlite(connStr);
+    dbConnStr = connectionStrings.GetValue<string>("Sqlite") ?? "Data Source=textops.db";
+    builder.Services.AddTextOpsSqlite(dbConnStr);
 }
 
 // Register database queue
@@ -42,6 +44,10 @@ builder.Services.AddScoped<IWorkerExecutor, StubWorkerExecutor>();
 builder.Services.AddHostedService<WorkerHostedService>();
 
 var host = builder.Build();
+
+// Log configuration on startup
+var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Worker");
+logger.LogInformation("Worker starting with Database={Database}", dbConnStr);
 
 // Ensure database exists (tables must be created by DevApi first or via migrations)
 await host.Services.EnsureDatabaseCreatedAsync();
