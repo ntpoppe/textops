@@ -16,6 +16,7 @@ public sealed class TextOpsDbContext : DbContext
     public DbSet<RunEntity> Runs => Set<RunEntity>();
     public DbSet<RunEventEntity> RunEvents => Set<RunEventEntity>();
     public DbSet<InboxEntryEntity> InboxEntries => Set<InboxEntryEntity>();
+    public DbSet<ExecutionQueueEntity> ExecutionQueue => Set<ExecutionQueueEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -65,6 +66,24 @@ public sealed class TextOpsDbContext : DbContext
             entity.Property(e => e.ChannelId).HasMaxLength(100);
             entity.Property(e => e.ProviderMessageId).HasMaxLength(500);
             entity.Property(e => e.RunId).HasMaxLength(50);
+        });
+
+        // ExecutionQueue table
+        modelBuilder.Entity<ExecutionQueueEntity>(entity =>
+        {
+            entity.ToTable("ExecutionQueue");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.RunId).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.JobKey).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Status).HasMaxLength(20).IsRequired();
+            entity.Property(e => e.LockedBy).HasMaxLength(100);
+            entity.Property(e => e.LastError).HasMaxLength(2000);
+
+            // Index for claiming: find pending entries quickly
+            entity.HasIndex(e => e.Status);
+            // Index for stale lock recovery
+            entity.HasIndex(e => new { e.Status, e.LockedAt });
         });
     }
 }

@@ -42,7 +42,7 @@ TextOps is a human-governed job orchestration system. Users send commands via a 
 - `Run`, `RunEvent`, `RunStatus` — Run state and audit trail
 - `ExecutionDispatch`, `OrchestratorResult` — Execution request and response
 - `IRunOrchestrator`, `IIntentParser`, `IWorkerExecutor` — Core interfaces
-- `IExecutionDispatcher`, `IExecutionQueueReader` — Queue interfaces
+- `IExecutionDispatcher`, `IExecutionQueue` — Queue interfaces
 
 **Why this project exists:** Contracts have no dependencies. Any project can reference them without pulling in implementation details. This enables clean architectural boundaries.
 
@@ -165,12 +165,15 @@ The orchestrator tracks processed messages using the key `{ChannelId}:{ProviderM
 
 #### Execution Queue and BackgroundService
 
-DevApi hosts an in-memory execution queue (`InMemoryExecutionQueue`) using `System.Threading.Channels`. When the orchestrator returns an `ExecutionDispatch`, DevApi enqueues it.
+DevApi can use either an in-memory queue (`InMemoryExecutionQueue`) or a database queue (`DatabaseExecutionQueue`) based on configuration. When the orchestrator returns an `ExecutionDispatch`, DevApi enqueues it.
 
-`ExecutionHostedService` is a `BackgroundService` that:
-1. Reads from the queue continuously
+For in-memory mode (default), `ExecutionHostedService` is a `BackgroundService` that:
+1. Claims work from the queue
 2. Calls `IWorkerExecutor.ExecuteAsync()` for each dispatch
-3. Logs outbound messages from execution callbacks
+3. Marks the queue entry as completed or released for retry
+4. Logs outbound messages from execution callbacks
+
+For database mode, DevApi only enqueues. A separate `TextOps.Worker` process polls the database queue and executes jobs.
 
 ---
 
@@ -593,12 +596,8 @@ Returns the `Run` snapshot and a copy of all events as JSON.
 
 ### Known Limitations
 
-- **In-memory only** — All state is lost on restart
-- **Single-instance only** — No shared state between processes
 - **DevApi only** — No real messaging channels (Twilio, Telegram, etc.)
 - **Stub execution only** — Jobs are simulated, not real
-- **No persistence** — Runs, events, and inbox are ephemeral
-- **No distributed queue** — Execution queue is in-process, not database-backed
 - **No job catalog** — Job keys are free-form strings
 - **No authentication** — Anyone can send any command
 - **Outbound logging only** — Messages are logged, not actually sent

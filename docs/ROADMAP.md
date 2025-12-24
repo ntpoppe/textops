@@ -296,17 +296,13 @@ AI assists humans. It never bypasses governance.
 ### Core Interfaces (Contracts)
 
 ```csharp
-// Steps 1-7 (implemented)
+// Steps 1-8 (implemented)
 IRunOrchestrator
 IIntentParser
 IWorkerExecutor
-IExecutionDispatcher
-IExecutionQueueReader
+IExecutionDispatcher         // Simple enqueue interface
+IExecutionQueue              // Full queue interface (claim, complete, release, reclaim)
 IRunRepository
-
-// Step 8
-IExecutionQueue              // Unified queue interface (in-memory or database)
-IDatabaseExecutionQueue      // Database-specific operations (claim, release)
 
 // Step 9
 IRunLifecycleService         // Expiration, reminders, cleanup
