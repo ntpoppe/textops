@@ -19,15 +19,17 @@ The roadmap is sequenced to build reliability before features:
 
 2. **Distributed workers next (Step 8)** — Separating workers requires durable dispatch. With persistence in place, workers can poll the database reliably.
 
-3. **Job catalog third (Step 9)** — With durability and real dispatch, you need stable job definitions. Free-form job keys work for dev, not production.
+3. **Run lifecycle third (Step 9)** — Stale runs accumulate. Expiration, reminders, and cleanup prevent unbounded growth before adding more features.
 
-4. **Scheduler fourth (Step 10)** — "Cron that asks for approval" requires a job catalog to reference and persistence to survive restarts.
+4. **Job catalog fourth (Step 10)** — With durability and lifecycle management, you need stable job definitions. Free-form job keys work for dev, not production.
 
-5. **Real channels fifth (Step 11)** — Channel adapters are plug-ins. The core must be reliable before adding more entry points.
+5. **Scheduler fifth (Step 11)** — "Cron that asks for approval" requires a job catalog to reference and persistence to survive restarts.
 
-6. **Observability sixth (Step 12)** — Metrics and tracing matter more once there's real traffic and distributed components.
+6. **Real channels sixth (Step 12)** — Channel adapters are plug-ins. The core must be reliable before adding more entry points.
 
-7. **AI subsystems last (Step 13)** — AI is assistive, never authoritative. It requires a rock-solid governance foundation to safely augment.
+7. **Observability seventh (Step 13)** — Metrics and tracing matter more once there's real traffic and distributed components.
+
+8. **AI subsystems last (Step 14)** — AI is assistive, never authoritative. It requires a rock-solid governance foundation to safely augment.
 
 ---
 
@@ -85,7 +87,108 @@ src/
 
 ---
 
-## Step 9 — Job Catalog
+## Step 9 — Run Lifecycle Management
+
+### Goal
+
+Runs should not live forever. Add expiration, reminders, cleanup, and ID collision handling.
+
+### Why Now
+
+With persistence in place, stale runs accumulate indefinitely. Before adding more features:
+- Unapproved runs should expire
+- Users need reminders for pending approvals
+- The 6-char run ID (~16.7M combinations) needs collision handling
+- Old data needs retention policies
+
+### Components
+
+```
+src/
+├── TextOps.Contracts/
+│   └── Runs/
+│       └── RunStatus.cs                    # Add: Expired (new terminal state)
+│
+├── TextOps.Orchestrator/
+│   └── Orchestration/
+│       └── PersistentRunOrchestrator.cs    # Handle expiration transitions
+│
+├── TextOps.Persistence/
+│   ├── Repositories/
+│   │   └── EfRunRepository.cs              # Add: collision detection, bulk expiration
+│   └── Services/
+│       └── RunLifecycleService.cs          # Background service for expiration/reminders
+│
+└── TextOps.Channels.DevApi/
+    └── appsettings.json                    # Lifecycle configuration
+```
+
+### Configuration
+
+```json
+{
+  "RunLifecycle": {
+    "ApprovalTimeoutMinutes": 1440,         // 24 hours default
+    "ReminderIntervalMinutes": 60,          // Remind every hour
+    "MaxReminders": 3,                      // Stop after 3 reminders
+    "RetentionDays": 90,                    // Keep completed runs for 90 days
+    "RunIdLength": 6,                       // Current: 6 hex chars
+    "RunIdRetryOnCollision": true           // Regenerate on collision
+  }
+}
+```
+
+### State Machine Update
+
+```
+                    ┌─────────────────────┐
+                    │  AwaitingApproval   │
+                    └─────────────────────┘
+                       │       │       │
+               approve │       │ deny  │ timeout
+                       ▼       ▼       ▼
+           ┌───────────────┐ ┌─────────┐ ┌─────────┐
+           │  Dispatching  │ │ Denied  │ │ Expired │ (NEW)
+           └───────────────┘ └─────────┘ └─────────┘
+```
+
+### Acceptance Criteria
+
+**Expiration:**
+- [ ] New `RunStatus.Expired` terminal state
+- [ ] Runs in `AwaitingApproval` auto-expire after configurable timeout
+- [ ] `RunExpired` event appended on expiration (actor: `system:lifecycle`)
+- [ ] Expiration message sent to originating conversation
+- [ ] Expired runs cannot be approved/denied (proper error message)
+
+**Reminders:**
+- [ ] Reminder message sent at configurable intervals
+- [ ] `ApprovalReminder` event appended for each reminder
+- [ ] Max reminder count configurable (stop spamming)
+- [ ] Reminder includes time remaining before expiration
+
+**Run ID Collision Handling:**
+- [ ] `CreateRunAsync` detects ID collision
+- [ ] Auto-retry with new ID (configurable max attempts)
+- [ ] If all retries fail, return error (don't silently overwrite)
+- [ ] Metric: collision rate (early warning for ID exhaustion)
+
+**Data Retention:**
+- [ ] Completed runs (Succeeded/Failed/Denied/Expired) older than retention period are soft-deleted
+- [ ] Soft-delete: `IsDeleted` flag, excluded from queries
+- [ ] Hard-delete: separate cleanup job (optional, for GDPR compliance)
+- [ ] Inbox entries cleaned up with their associated runs
+
+**Tests:**
+- [ ] Expiration transitions work correctly
+- [ ] Reminders are sent at correct intervals
+- [ ] Collision detection and retry work
+- [ ] Retention cleanup respects retention period
+- [ ] Terminal state runs cannot be expired (idempotency)
+
+---
+
+## Step 10 — Job Catalog
 
 ### Goal
 
@@ -109,7 +212,7 @@ With persistence and real dispatch:
 
 ---
 
-## Step 10 — Scheduler Service
+## Step 11 — Scheduler Service
 
 ### Goal
 
@@ -120,13 +223,12 @@ With persistence and real dispatch:
 - [ ] Create schedule with cron expression
 - [ ] Scheduler triggers job at scheduled time
 - [ ] Triggered job creates run awaiting approval
-- [ ] Approval timeout: run auto-denied after configurable period
 - [ ] Scheduler restart: missed triggers within 5 minutes are processed
 - [ ] `ApprovalPolicy.Never` jobs auto-dispatch on trigger
 
 ---
 
-## Step 11 — Real Channels (Twilio/Telegram/Slack)
+## Step 12 — Real Channels (Twilio/Telegram/Slack)
 
 ### Goal
 
@@ -148,7 +250,7 @@ Accept messages from real messaging platforms. Same orchestrator, different entr
 
 ---
 
-## Step 12 — Observability & Ops
+## Step 13 — Observability & Ops
 
 ### Goal
 
@@ -164,7 +266,7 @@ Production visibility: logs, metrics, traces, health checks.
 
 ---
 
-## Step 13 — AI Subsystems
+## Step 14 — AI Subsystems
 
 ### Goal
 
@@ -207,17 +309,20 @@ IExecutionQueue              // Unified queue interface (in-memory or database)
 IDatabaseExecutionQueue      // Database-specific operations (claim, release)
 
 // Step 9
-IJobCatalog
+IRunLifecycleService         // Expiration, reminders, cleanup
 
 // Step 10
+IJobCatalog
+
+// Step 11
 IScheduleRepository
 ISchedulerService
 
-// Step 11
+// Step 12
 IChannelAdapter         // Generic interface for all channels
 IMessageSender          // Send outbound messages
 
-// Step 13
+// Step 14
 IAiIntentParser
 IAiRiskScorer
 IAiSummarizer
@@ -235,9 +340,13 @@ Current:
 - `ExecutionSucceeded`
 - `ExecutionFailed`
 
-Future:
+Future (Step 9 - Lifecycle):
+- `ApprovalReminder`
+- `RunExpired`
+
+Future (Step 11 - Scheduler):
 - `ScheduleTriggered`
-- `ApprovalTimedOut`
-- `ExecutionRetried`
+
+Future (Step 14 - AI):
 - `RiskFlagged`
 - `AiParseUsed`
