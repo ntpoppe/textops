@@ -1,28 +1,20 @@
-using TextOps.Contracts.Intents;
-using TextOps.Contracts.Parsing;
 using TextOps.Contracts.Runs;
-using TextOps.Orchestrator.Orchestration;
-using TextOps.Orchestrator.Parsing;
 
 namespace TextOps.Orchestrator.Tests.Orchestration;
 
 [TestFixture]
-public class InvalidTransitionTests
+public class InvalidTransitionTests : OrchestratorTestBase
 {
-    private InMemoryRunOrchestrator _orchestrator = null!;
-    private DeterministicIntentParser _parser = null!;
     private string _runId = null!;
 
-    [SetUp]
-    public void SetUp()
+    public override void SetUp()
     {
-        _orchestrator = new InMemoryRunOrchestrator();
-        _parser = new DeterministicIntentParser();
+        base.SetUp();
 
         // Create a run first
         var createMsg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-{Guid.NewGuid()}");
-        var createIntent = _parser.Parse(createMsg.Body);
-        var createResult = _orchestrator.HandleInbound(createMsg, createIntent);
+        var createIntent = Parser.Parse(createMsg.Body);
+        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
         _runId = createResult.RunId!;
     }
 
@@ -31,13 +23,13 @@ public class InvalidTransitionTests
     {
         // Arrange: Approve the run first
         var approveMsg1 = TestHelpers.CreateInboundMessage(body: $"yes {_runId}", providerMessageId: $"approve-first-{Guid.NewGuid()}");
-        var approveIntent1 = _parser.Parse(approveMsg1.Body);
-        _orchestrator.HandleInbound(approveMsg1, approveIntent1);
+        var approveIntent1 = Parser.Parse(approveMsg1.Body);
+        Orchestrator.HandleInbound(approveMsg1, approveIntent1);
 
         // Act: Attempt to approve again
         var approveMsg2 = TestHelpers.CreateInboundMessage(body: $"yes {_runId}", providerMessageId: $"approve-second-{Guid.NewGuid()}");
-        var approveIntent2 = _parser.Parse(approveMsg2.Body);
-        var result2 = _orchestrator.HandleInbound(approveMsg2, approveIntent2);
+        var approveIntent2 = Parser.Parse(approveMsg2.Body);
+        var result2 = Orchestrator.HandleInbound(approveMsg2, approveIntent2);
 
         // Assert: Second approval should be rejected
         Assert.Multiple(() =>
@@ -48,7 +40,7 @@ public class InvalidTransitionTests
         });
 
         // Verify run remains in Dispatching state
-        var timeline = _orchestrator.GetTimeline(_runId);
+        var timeline = Orchestrator.GetTimeline(_runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Dispatching), "Run should remain in Dispatching state");
     }
 
@@ -57,13 +49,13 @@ public class InvalidTransitionTests
     {
         // Arrange: Approve the run first
         var approveMsg = TestHelpers.CreateInboundMessage(body: $"yes {_runId}", providerMessageId: $"approve-{Guid.NewGuid()}");
-        var approveIntent = _parser.Parse(approveMsg.Body);
-        _orchestrator.HandleInbound(approveMsg, approveIntent);
+        var approveIntent = Parser.Parse(approveMsg.Body);
+        Orchestrator.HandleInbound(approveMsg, approveIntent);
 
         // Act: Try to deny after approval
         var denyMsg = TestHelpers.CreateInboundMessage(body: $"no {_runId}", providerMessageId: $"deny-after-approve-{Guid.NewGuid()}");
-        var denyIntent = _parser.Parse(denyMsg.Body);
-        var result = _orchestrator.HandleInbound(denyMsg, denyIntent);
+        var denyIntent = Parser.Parse(denyMsg.Body);
+        var result = Orchestrator.HandleInbound(denyMsg, denyIntent);
 
         // Assert: Denial should be rejected
         Assert.Multiple(() =>
@@ -74,7 +66,7 @@ public class InvalidTransitionTests
         });
 
         // Verify run remains in Dispatching state
-        var timeline = _orchestrator.GetTimeline(_runId);
+        var timeline = Orchestrator.GetTimeline(_runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Dispatching), "Run should remain in Dispatching state");
     }
 
@@ -83,10 +75,10 @@ public class InvalidTransitionTests
     {
         // Arrange
         var msg = TestHelpers.CreateInboundMessage(body: "yes UNKNOWN123", providerMessageId: $"approve-unknown-{Guid.NewGuid()}");
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
         // Act
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = Orchestrator.HandleInbound(msg, intent);
 
         // Assert: Should reject approval of unknown run
         Assert.Multiple(() =>
@@ -103,13 +95,13 @@ public class InvalidTransitionTests
     {
         // Arrange: Deny the run first
         var denyMsg1 = TestHelpers.CreateInboundMessage(body: $"no {_runId}", providerMessageId: $"deny-first-{Guid.NewGuid()}");
-        var denyIntent1 = _parser.Parse(denyMsg1.Body);
-        _orchestrator.HandleInbound(denyMsg1, denyIntent1);
+        var denyIntent1 = Parser.Parse(denyMsg1.Body);
+        Orchestrator.HandleInbound(denyMsg1, denyIntent1);
 
         // Act: Try to deny again
         var denyMsg2 = TestHelpers.CreateInboundMessage(body: $"no {_runId}", providerMessageId: $"deny-second-{Guid.NewGuid()}");
-        var denyIntent2 = _parser.Parse(denyMsg2.Body);
-        var result = _orchestrator.HandleInbound(denyMsg2, denyIntent2);
+        var denyIntent2 = Parser.Parse(denyMsg2.Body);
+        var result = Orchestrator.HandleInbound(denyMsg2, denyIntent2);
 
         // Assert: Second denial should be rejected
         Assert.Multiple(() =>
@@ -120,4 +112,3 @@ public class InvalidTransitionTests
         });
     }
 }
-

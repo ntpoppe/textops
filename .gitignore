@@ -490,3 +490,6 @@ src/**/bin/
 src/**/cache/
 
 AGENTS.md
+src/**/*.db
+src/**/*.db-shm
+src/**/*.db-wal

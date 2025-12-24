@@ -30,14 +30,19 @@ TextOps is a human-governed job orchestration platform that enables users to run
 - Execution lifecycle callbacks (`OnExecutionStarted`, `OnExecutionCompleted`)
 - Completion notifications emitted to original conversation
 
+**Persistence:**
+- SQLite database for development (auto-created on startup)
+- PostgreSQL support for production (via configuration)
+- Runs, events, and inbox deduplication survive restarts
+
 **Testing:**
-- Comprehensive unit test suite (108 tests)
+- Comprehensive unit test suite (150+ tests)
 - Integration tests for DevApi endpoints
+- Persistence tests for repository and orchestrator
 - Tests cover state transitions, idempotency, and error handling
 
 ### What's NOT Implemented
 
-- **Persistence**: All state is in-memory; restart loses all runs/events
 - **Real Messaging Channels**: Twilio SMS, Telegram, Slack adapters not yet built
 - **Distributed Queue**: Using in-process queue; database-backed queue not integrated
 - **Job Catalog**: Job keys are free-form strings; no schema/versioning/policies
@@ -54,7 +59,11 @@ TextOps is a human-governed job orchestration platform that enables users to run
 - **`TextOps.Contracts`**: Shared domain types (`InboundMessage`, `OutboundMessage`, `Run`, `RunEvent`, `ParsedIntent`)
 - **`TextOps.Orchestrator`**: Core business logic
   - `DeterministicIntentParser`: Parses user commands into structured intents
-  - `InMemoryRunOrchestrator`: State machine, event log, idempotency, approval gating
+  - `PersistentRunOrchestrator`: State machine, event log, idempotency, approval gating (database-backed)
+- **`TextOps.Persistence`**: Database layer
+  - `TextOpsDbContext`: EF Core context supporting SQLite and PostgreSQL
+  - `EfRunRepository`: Persists runs, events, and inbox deduplication
+  - Entity mappings for `Run`, `RunEvent`, `InboxEntry`
 - **`TextOps.Channels.DevApi`**: HTTP channel adapter (translation only, no business logic)
   - Controllers translate HTTP ↔ domain contracts
   - Background service processes execution queue
@@ -74,10 +83,10 @@ DeterministicIntentParser
   ↓
 ParsedIntent
   ↓
-InMemoryRunOrchestrator.HandleInbound()
+PersistentRunOrchestrator.HandleInbound()
   ├─ Idempotency check (ChannelId:ProviderMessageId)
-  ├─ State machine transition
-  ├─ Append RunEvent(s)
+  ├─ State machine transition (database)
+  ├─ Append RunEvent(s) (database)
   └─ Return OrchestratorResult
       ├─ OutboundMessage[] (for DevApi to log)
       └─ ExecutionDispatch? (if approved)
@@ -389,20 +398,30 @@ src/
 │
 ├── TextOps.Orchestrator/       # Core business logic
 │   ├── Parsing/                # DeterministicIntentParser
-│   └── Orchestration/         # InMemoryRunOrchestrator, IRunOrchestrator, ExecutionDispatch
+│   └── Orchestration/          # PersistentRunOrchestrator
+│
+├── TextOps.Persistence/        # Database layer (EF Core)
+│   ├── Entities/               # RunEntity, RunEventEntity, InboxEntryEntity
+│   ├── Repositories/           # EfRunRepository, IRunRepository
+│   └── TextOpsDbContext.cs     # SQLite/PostgreSQL support
 │
 ├── TextOps.Channels.DevApi/    # HTTP channel adapter
 │   ├── Controllers/            # DevInboundController, RunsController
 │   ├── Dtos/                   # Request/response DTOs
-│   ├── Execution/              # InMemoryExecutionQueue, ExecutionHostedService
 │   └── Program.cs              # DI registration, startup
+│
+├── TextOps.Execution/          # Execution queue
+│   ├── InMemoryExecutionQueue.cs
+│   └── ExecutionHostedService.cs
 │
 └── TextOps.Worker.Stub/        # Execution simulation
     ├── IWorkerExecutor.cs
     └── StubWorkerExecutor.cs
 
 tests/
-└── TextOps.Orchestrator.Tests/ # Unit tests (108 tests)
+├── TextOps.Orchestrator.Tests/ # Unit tests (113 tests)
+├── TextOps.Persistence.Tests/  # Persistence layer tests
+└── TextOps.Channels.DevApi.Tests/ # Integration tests
     ├── Orchestration/          # State machine, idempotency, execution lifecycle tests
     └── Parsing/                # Parser grammar tests
 ```

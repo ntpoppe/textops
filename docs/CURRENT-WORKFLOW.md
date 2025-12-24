@@ -17,11 +17,11 @@ TextOps is a human-governed job orchestration system. Users send commands via a 
 **What this MVP guarantees:**
 - Every job execution requires human approval (no auto-execute)
 - All state changes are recorded as immutable events
-- Duplicate messages produce no duplicate effects (within a single process lifetime)
+- State persists across restarts (SQLite for dev, PostgreSQL for prod)
+- Duplicate messages produce no duplicate effects
 - Invalid state transitions are rejected cleanly
 
 **What this MVP intentionally does not do:**
-- Persist state across restarts (in-memory only)
 - Connect to real messaging platforms (DevApi only)
 - Execute real jobs (stub worker only)
 - Support multiple instances (single process only)
@@ -66,15 +66,15 @@ Parses raw text into structured intents using strict regex patterns:
 
 The parser is intentionally conservative. If input doesn't match exactly, it returns `Unknown` rather than guessing.
 
-#### InMemoryRunOrchestrator
+#### PersistentRunOrchestrator
 
 The authoritative decision-maker for all run state changes.
 
 **Responsibilities:**
 - Validates and executes state transitions
-- Maintains the run snapshot (`ConcurrentDictionary<string, Run>`)
-- Maintains the event timeline (`ConcurrentDictionary<string, List<RunEvent>>`)
-- Enforces inbound idempotency via inbox deduplication
+- Persists run snapshots and events to the database via `IRunRepository`
+- Enforces inbound idempotency via inbox deduplication table
+- Uses optimistic concurrency for safe concurrent transitions
 - Produces `OutboundMessage` effects (does not send them)
 - Signals when execution should be dispatched
 
@@ -244,7 +244,7 @@ The worker is **in-process** and calls the orchestrator directly. In a productio
                                     │
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ 4. InMemoryRunOrchestrator.HandleInbound(msg, intent)                │
+│ 4. PersistentRunOrchestrator.HandleInbound(msg, intent)              │
 │    a. Check inbox: "dev:m1" not seen → proceed                       │
 │    b. Mark inbox: "dev:m1" → processed                               │
 │    c. Route to HandleRunJob()                                        │

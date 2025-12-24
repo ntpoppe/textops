@@ -1,28 +1,20 @@
-using TextOps.Contracts.Intents;
-using TextOps.Contracts.Parsing;
 using TextOps.Contracts.Runs;
-using TextOps.Orchestrator.Orchestration;
-using TextOps.Orchestrator.Parsing;
 
 namespace TextOps.Orchestrator.Tests.Orchestration;
 
 [TestFixture]
-public class ApprovalFlowTests
+public class ApprovalFlowTests : OrchestratorTestBase
 {
-    private InMemoryRunOrchestrator _orchestrator = null!;
-    private DeterministicIntentParser _parser = null!;
     private string _runId = null!;
 
-    [SetUp]
-    public void SetUp()
+    public override void SetUp()
     {
-        _orchestrator = new InMemoryRunOrchestrator();
-        _parser = new DeterministicIntentParser();
+        base.SetUp();
 
         // Create a run first
         var createMsg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-{Guid.NewGuid()}");
-        var createIntent = _parser.Parse(createMsg.Body);
-        var createResult = _orchestrator.HandleInbound(createMsg, createIntent);
+        var createIntent = Parser.Parse(createMsg.Body);
+        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
         _runId = createResult.RunId!;
     }
 
@@ -30,9 +22,9 @@ public class ApprovalFlowTests
     public void HandleInbound_ApproveWhenAwaitingApproval_TransitionsToDispatching()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"yes {_runId}", providerMessageId: $"approve-{Guid.NewGuid()}");
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = Orchestrator.HandleInbound(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -40,7 +32,7 @@ public class ApprovalFlowTests
             Assert.That(result.DispatchedExecution, Is.True);
         });
 
-        var timeline = _orchestrator.GetTimeline(_runId);
+        var timeline = Orchestrator.GetTimeline(_runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Dispatching));
     }
 
@@ -48,11 +40,11 @@ public class ApprovalFlowTests
     public void HandleInbound_ApproveWhenAwaitingApproval_EmitsRunApprovedAndExecutionDispatched()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"yes {_runId}", providerMessageId: $"approve-events-{Guid.NewGuid()}");
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = Orchestrator.HandleInbound(msg, intent);
 
-        var timeline = _orchestrator.GetTimeline(_runId);
+        var timeline = Orchestrator.GetTimeline(_runId);
         Assert.Multiple(() =>
         {
             Assert.That(timeline.Events, Has.Count.GreaterThanOrEqualTo(4));
@@ -70,9 +62,9 @@ public class ApprovalFlowTests
     public void HandleInbound_ApproveWhenAwaitingApproval_ReturnsConfirmationMessage()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"yes {_runId}", providerMessageId: $"approve-confirm-{Guid.NewGuid()}");
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = Orchestrator.HandleInbound(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -89,9 +81,9 @@ public class ApprovalFlowTests
     public void HandleInbound_ApproveWithApprovalKeyword_Works()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"approve {_runId}", providerMessageId: $"approve-keyword-{Guid.NewGuid()}");
-        var intent = _parser.Parse(msg.Body);
+        var intent = Parser.Parse(msg.Body);
 
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = Orchestrator.HandleInbound(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -100,4 +92,3 @@ public class ApprovalFlowTests
         });
     }
 }
-

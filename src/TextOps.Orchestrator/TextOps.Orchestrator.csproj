@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TextOps.Contracts\TextOps.Contracts.csproj" />
+    <ProjectReference Include="..\TextOps.Persistence\TextOps.Persistence.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TextOps.Contracts.Execution;
@@ -10,16 +11,16 @@ namespace TextOps.Execution;
 public sealed class ExecutionHostedService : BackgroundService
 {
     private readonly IExecutionQueueReader _queue;
-    private readonly IWorkerExecutor _workerExecutor;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ExecutionHostedService> _logger;
 
     public ExecutionHostedService(
         IExecutionQueueReader queue,
-        IWorkerExecutor workerExecutor,
+        IServiceScopeFactory scopeFactory,
         ILogger<ExecutionHostedService> logger)
     {
         _queue = queue;
-        _workerExecutor = workerExecutor;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -61,12 +62,15 @@ public sealed class ExecutionHostedService : BackgroundService
 
     private async Task ProcessDispatchAsync(ExecutionDispatch dispatch, CancellationToken stoppingToken)
     {
+        using var scope = _scopeFactory.CreateScope();
+        var workerExecutor = scope.ServiceProvider.GetRequiredService<IWorkerExecutor>();
+
         try
         {
             _logger.LogInformation("Processing execution dispatch: RunId={RunId}, JobKey={JobKey}", dispatch.RunId, dispatch.JobKey);
 
             // Execute the work
-            var result = await _workerExecutor.ExecuteAsync(dispatch, stoppingToken);
+            var result = await workerExecutor.ExecuteAsync(dispatch, stoppingToken);
 
             // Process outbound messages from execution callbacks
             // Note: In production, these would be sent via the appropriate channel adapter
