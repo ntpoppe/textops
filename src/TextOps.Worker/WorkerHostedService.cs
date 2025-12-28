@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TextOps.Contracts.Execution;
+using TextOps.Contracts.Messaging;
 
 namespace TextOps.Worker;
 
@@ -32,10 +33,21 @@ public sealed class WorkerHostedService : BackgroundService
     {
         _logger.LogInformation("Worker started: WorkerId={WorkerId}", _workerId);
 
-        // Start stale lock recovery task
-        var recoveryTask = RunStaleLockRecoveryAsync(stoppingToken);
+        var recoveryTask = StartRecoveryTask(stoppingToken);
 
-        // Main polling loop
+        await PollForWork(stoppingToken);
+
+        await recoveryTask;
+        _logger.LogInformation("Worker stopped: WorkerId={WorkerId}", _workerId);
+    }
+
+    private Task StartRecoveryTask(CancellationToken stoppingToken)
+    {
+        return RunStaleLockRecoveryAsync(stoppingToken);
+    }
+
+    private async Task PollForWork(CancellationToken stoppingToken)
+    {
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -44,7 +56,6 @@ public sealed class WorkerHostedService : BackgroundService
                 
                 if (!processed)
                 {
-                    // No work available, wait before polling again
                     await Task.Delay(_options.PollInterval, stoppingToken);
                 }
             }
@@ -52,9 +63,9 @@ public sealed class WorkerHostedService : BackgroundService
             {
                 break;
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                _logger.LogError(ex, "Error in worker loop. Retrying in {Delay}...", _options.ErrorRetryDelay);
+                _logger.LogError(exception, "Error in worker loop. Retrying in {Delay}...", _options.ErrorRetryDelay);
                 try
                 {
                     await Task.Delay(_options.ErrorRetryDelay, stoppingToken);
@@ -65,89 +76,111 @@ public sealed class WorkerHostedService : BackgroundService
                 }
             }
         }
-
-        await recoveryTask;
-        _logger.LogInformation("Worker stopped: WorkerId={WorkerId}", _workerId);
     }
 
-    private async Task<bool> TryProcessNextAsync(CancellationToken ct)
+    private async Task<bool> TryProcessNextAsync(CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
-        var queue = scope.ServiceProvider.GetRequiredService<IExecutionQueue>();
-        var executor = scope.ServiceProvider.GetRequiredService<IWorkerExecutor>();
+        var executionQueue = scope.ServiceProvider.GetRequiredService<IExecutionQueue>();
+        var workerExecutor = scope.ServiceProvider.GetRequiredService<IWorkerExecutor>();
 
-        var queued = await queue.ClaimNextAsync(_workerId, ct);
-        if (queued == null)
+        var queuedDispatch = await executionQueue.ClaimNextAsync(_workerId, cancellationToken);
+        if (queuedDispatch == null)
             return false;
 
-        _logger.LogInformation(
-            "Processing dispatch: QueueId={QueueId}, RunId={RunId}, JobKey={JobKey}, Attempt={Attempt}",
-            queued.QueueId, queued.RunId, queued.JobKey, queued.Attempts);
+        LogDispatchStart(queuedDispatch);
 
         try
         {
-            var dispatch = new ExecutionDispatch(queued.RunId, queued.JobKey);
-            var result = await executor.ExecuteAsync(dispatch, ct);
+            var executionDispatch = new ExecutionDispatch(queuedDispatch.RunId, queuedDispatch.JobKey);
+            var orchestratorResult = await workerExecutor.ExecuteAsync(executionDispatch, cancellationToken);
 
-            // Log outbound messages (in production, route to channel adapters)
-            foreach (var outbound in result.Outbound)
-            {
-                _logger.LogInformation("OUTBOUND ({ChannelId}): {Body}", outbound.ChannelId, outbound.Body);
-            }
-
-            await queue.CompleteAsync(queued.QueueId, success: true, error: null, ct);
+            LogOutboundMessages(orchestratorResult.Outbound);
+            await HandleExecutionSuccess(executionQueue, queuedDispatch.QueueId, cancellationToken);
             return true;
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Shutdown requested - release back to queue for another worker
-            _logger.LogWarning("Execution cancelled, releasing: RunId={RunId}", queued.RunId);
-            await queue.ReleaseAsync(queued.QueueId, "Cancelled due to shutdown", ct);
+            await HandleExecutionCancellation(executionQueue, queuedDispatch, cancellationToken);
             throw;
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            _logger.LogError(ex, "Execution failed: RunId={RunId}", queued.RunId);
-
-            if (queued.Attempts >= _options.MaxAttempts)
-            {
-                _logger.LogError(
-                    "Max attempts reached, marking failed: RunId={RunId}, Attempts={Attempts}",
-                    queued.RunId, queued.Attempts);
-                await queue.CompleteAsync(queued.QueueId, success: false, error: ex.Message, ct);
-            }
-            else
-            {
-                await queue.ReleaseAsync(queued.QueueId, ex.Message, ct);
-            }
+            await HandleExecutionFailure(executionQueue, queuedDispatch, exception, cancellationToken);
             return true;
         }
     }
 
-    private async Task RunStaleLockRecoveryAsync(CancellationToken ct)
+    private void LogDispatchStart(QueuedDispatch queuedDispatch)
     {
-        while (!ct.IsCancellationRequested)
+        _logger.LogInformation(
+            "Processing dispatch: QueueId={QueueId}, RunId={RunId}, JobKey={JobKey}, Attempt={Attempt}",
+            queuedDispatch.QueueId, queuedDispatch.RunId, queuedDispatch.JobKey, queuedDispatch.Attempts);
+    }
+
+    private void LogOutboundMessages(IReadOnlyList<OutboundMessage> outboundMessages)
+    {
+        foreach (var outboundMessage in outboundMessages)
+        {
+            _logger.LogInformation("OUTBOUND ({ChannelId}): {Body}", outboundMessage.ChannelId, outboundMessage.Body);
+        }
+    }
+
+    private static async Task HandleExecutionSuccess(IExecutionQueue executionQueue, long queueId, CancellationToken cancellationToken)
+    {
+        await executionQueue.CompleteAsync(queueId, success: true, errorMessage: null, cancellationToken);
+    }
+
+    private async Task HandleExecutionCancellation(IExecutionQueue executionQueue, QueuedDispatch queuedDispatch, CancellationToken cancellationToken)
+    {
+        _logger.LogWarning("Execution cancelled, releasing: RunId={RunId}", queuedDispatch.RunId);
+        await executionQueue.ReleaseAsync(queuedDispatch.QueueId, "Cancelled due to shutdown", cancellationToken);
+    }
+
+    private async Task HandleExecutionFailure(IExecutionQueue executionQueue, QueuedDispatch queuedDispatch, Exception exception, CancellationToken cancellationToken)
+    {
+        _logger.LogError(exception, "Execution failed: RunId={RunId}", queuedDispatch.RunId);
+
+        if (ShouldMarkAsFailed(queuedDispatch))
+        {
+            _logger.LogError(
+                "Max attempts reached, marking failed: RunId={RunId}, Attempts={Attempts}",
+                queuedDispatch.RunId, queuedDispatch.Attempts);
+            await executionQueue.CompleteAsync(queuedDispatch.QueueId, success: false, errorMessage: exception.Message, cancellationToken);
+        }
+        else
+        {
+            await executionQueue.ReleaseAsync(queuedDispatch.QueueId, exception.Message, cancellationToken);
+        }
+    }
+
+    private bool ShouldMarkAsFailed(QueuedDispatch queuedDispatch)
+        => queuedDispatch.Attempts >= _options.MaxAttempts;
+
+    private async Task RunStaleLockRecoveryAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(_options.StaleLockCheckInterval, ct);
+                await Task.Delay(_options.StaleLockCheckInterval, cancellationToken);
 
                 using var scope = _scopeFactory.CreateScope();
-                var queue = scope.ServiceProvider.GetRequiredService<IExecutionQueue>();
+                var executionQueue = scope.ServiceProvider.GetRequiredService<IExecutionQueue>();
                 
-                var reclaimed = await queue.ReclaimStaleAsync(_options.LockTimeout, ct);
-                if (reclaimed > 0)
+                var reclaimedCount = await executionQueue.ReclaimStaleAsync(_options.LockTimeout, cancellationToken);
+                if (reclaimedCount > 0)
                 {
-                    _logger.LogWarning("Reclaimed {Count} stale queue entries", reclaimed);
+                    _logger.LogWarning("Reclaimed {Count} stale queue entries", reclaimedCount);
                 }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 break;
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                _logger.LogError(ex, "Error in stale lock recovery");
+                _logger.LogError(exception, "Error in stale lock recovery");
             }
         }
     }

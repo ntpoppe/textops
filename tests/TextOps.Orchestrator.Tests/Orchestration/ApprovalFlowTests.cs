@@ -7,24 +7,24 @@ public class ApprovalFlowTests : OrchestratorTestBase
 {
     private string _runId = null!;
 
-    public override void SetUp()
+    public override async Task SetUpAsync()
     {
-        base.SetUp();
+        await base.SetUpAsync();
 
         // Create a run first
         var createMsg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-{Guid.NewGuid()}");
         var createIntent = Parser.Parse(createMsg.Body);
-        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await Orchestrator.HandleInboundAsync(createMsg, createIntent);
         _runId = createResult.RunId!;
     }
 
     [Test]
-    public void HandleInbound_ApproveWhenAwaitingApproval_TransitionsToDispatching()
+    public async Task HandleInbound_ApproveWhenAwaitingApproval_TransitionsToDispatching()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"yes {_runId}", providerMessageId: $"approve-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -32,19 +32,19 @@ public class ApprovalFlowTests : OrchestratorTestBase
             Assert.That(result.DispatchedExecution, Is.True);
         });
 
-        var timeline = Orchestrator.GetTimeline(_runId);
+        var timeline = await Orchestrator.GetTimelineAsync(_runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Dispatching));
     }
 
     [Test]
-    public void HandleInbound_ApproveWhenAwaitingApproval_EmitsRunApprovedAndExecutionDispatched()
+    public async Task HandleInbound_ApproveWhenAwaitingApproval_EmitsRunApprovedAndExecutionDispatched()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"yes {_runId}", providerMessageId: $"approve-events-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
-        var timeline = Orchestrator.GetTimeline(_runId);
+        var timeline = await Orchestrator.GetTimelineAsync(_runId);
         Assert.Multiple(() =>
         {
             Assert.That(timeline.Events, Has.Count.GreaterThanOrEqualTo(4));
@@ -59,12 +59,12 @@ public class ApprovalFlowTests : OrchestratorTestBase
     }
 
     [Test]
-    public void HandleInbound_ApproveWhenAwaitingApproval_ReturnsConfirmationMessage()
+    public async Task HandleInbound_ApproveWhenAwaitingApproval_ReturnsConfirmationMessage()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"yes {_runId}", providerMessageId: $"approve-confirm-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -78,12 +78,12 @@ public class ApprovalFlowTests : OrchestratorTestBase
     }
 
     [Test]
-    public void HandleInbound_ApproveWithApprovalKeyword_Works()
+    public async Task HandleInbound_ApproveWithApprovalKeyword_Works()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"approve {_runId}", providerMessageId: $"approve-keyword-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
         Assert.Multiple(() =>
         {

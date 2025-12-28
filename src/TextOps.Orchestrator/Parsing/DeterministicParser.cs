@@ -25,23 +25,23 @@ namespace TextOps.Orchestrator.Parsing;
 /// </summary>
 public sealed class DeterministicIntentParser : IIntentParser
 {
-    // Matches commands like: "run nightly-backup" => job: nightly-backup
+    // Matches: "run myjob-123", "run backup_task", "run testjob"
     private static readonly Regex RunRegex =
         new(@"^run\s+(?<job>[a-zA-Z0-9\-_]+)$", RegexOptions.IgnoreCase);
 
-    // Matches "run" without job key - orchestrator will validate and return error
+    // Matches: "run", "run   " (run command with no job specified)
     private static readonly Regex RunWithoutJobRegex =
         new(@"^run\s*$", RegexOptions.IgnoreCase);
 
-    // Matches commands like: "yes 8f3a" or "approve 123-abc" => run: 8f3a or 123-abc
+    // Matches: "yes 91ff4", "approve job-run-8", "approve aBc_123"
     private static readonly Regex ApproveRegex =
         new(@"^(yes|approve)\s+(?<run>[a-zA-Z0-9\-_]+)$", RegexOptions.IgnoreCase);
 
-    // Matches commands like: "no 8f3a" or "deny 456-def" => run: 8f3a or 456-def
+    // Matches: "no 9-a", "deny 123xyz", "deny my-run_5"
     private static readonly Regex DenyRegex =
         new(@"^(no|deny)\s+(?<run>[a-zA-Z0-9\-_]+)$", RegexOptions.IgnoreCase);
 
-    // Matches commands like: "status 884422" or "status run-321" => run: 884422 or run-321
+    // Matches: "status 23", "status job-abc_X", "status RUN-23"
     private static readonly Regex StatusRegex =
         new(@"^status\s+(?<run>[a-zA-Z0-9\-_]+)$", RegexOptions.IgnoreCase);
 
@@ -58,61 +58,97 @@ public sealed class DeterministicIntentParser : IIntentParser
     {
         var input = text.Trim();
 
-        if (RunRegex.Match(input) is { Success: true } run)
+        if (TryParseRunJob(input, out var runJobIntent))
+            return runJobIntent;
+
+        if (TryParseApprove(input, out var approveIntent))
+            return approveIntent;
+
+        if (TryParseDeny(input, out var denyIntent))
+            return denyIntent;
+
+        if (TryParseStatus(input, out var statusIntent))
+            return statusIntent;
+
+        return new ParsedIntent(IntentType.Unknown, input, JobKey: null, RunId: null);
+    }
+
+    private bool TryParseRunJob(string input, out ParsedIntent intent)
+    {
+        if (RunRegex.Match(input) is { Success: true } match)
         {
-            return new ParsedIntent(
+            intent = new ParsedIntent(
                 IntentType.RunJob,
                 input,
-                JobKey: run.Groups["job"].Value,
+                JobKey: match.Groups["job"].Value,
                 RunId: null
             );
+            return true;
         }
 
         if (RunWithoutJobRegex.Match(input) is { Success: true })
         {
-            return new ParsedIntent(
+            intent = new ParsedIntent(
                 IntentType.RunJob,
                 input,
                 JobKey: null,
                 RunId: null
             );
+            return true;
         }
 
-        if (ApproveRegex.Match(input) is { Success: true } approve)
+        intent = default!;
+        return false;
+    }
+
+    private bool TryParseApprove(string input, out ParsedIntent intent)
+    {
+        if (ApproveRegex.Match(input) is { Success: true } match)
         {
-            return new ParsedIntent(
+            intent = new ParsedIntent(
                 IntentType.ApproveRun,
                 input,
                 JobKey: null,
-                RunId: approve.Groups["run"].Value
+                RunId: match.Groups["run"].Value
             );
+            return true;
         }
 
-        if (DenyRegex.Match(input) is { Success: true } deny)
+        intent = default!;
+        return false;
+    }
+
+    private bool TryParseDeny(string input, out ParsedIntent intent)
+    {
+        if (DenyRegex.Match(input) is { Success: true } match)
         {
-            return new ParsedIntent(
+            intent = new ParsedIntent(
                 IntentType.DenyRun,
                 input,
                 JobKey: null,
-                RunId: deny.Groups["run"].Value
+                RunId: match.Groups["run"].Value
             );
+            return true;
         }
 
-        if (StatusRegex.Match(input) is { Success: true } status)
+        intent = default!;
+        return false;
+    }
+
+    private bool TryParseStatus(string input, out ParsedIntent intent)
+    {
+        if (StatusRegex.Match(input) is { Success: true } match)
         {
-            return new ParsedIntent(
+            intent = new ParsedIntent(
                 IntentType.Status,
                 input,
                 JobKey: null,
-                RunId: status.Groups["run"].Value
+                RunId: match.Groups["run"].Value
             );
+            return true;
         }
 
-        return new ParsedIntent(
-            IntentType.Unknown,
-            input,
-            JobKey: null,
-            RunId: null
-        );
+        intent = default!;
+        return false;
     }
 }

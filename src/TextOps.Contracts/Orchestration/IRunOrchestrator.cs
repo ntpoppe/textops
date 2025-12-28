@@ -12,21 +12,21 @@ public interface IRunOrchestrator
     /// <summary>
     /// Handles an inbound message with its parsed intent.
     /// </summary>
-    OrchestratorResult HandleInbound(InboundMessage msg, ParsedIntent intent);
+    Task<OrchestratorResult> HandleInboundAsync(InboundMessage msg, ParsedIntent intent);
 
     /// <summary>
     /// Gets the timeline (run + events) for a given run ID.
     /// </summary>
-    RunTimeline GetTimeline(string runId);
+    Task<RunTimeline> GetTimelineAsync(string runId);
 
     /// <summary>
     /// Called when a worker starts executing a run.
     /// </summary>
-    OrchestratorResult OnExecutionStarted(string runId, string workerId);
+    Task<OrchestratorResult> OnExecutionStartedAsync(string runId, string workerId);
 
     /// <summary>
     /// Called when a worker completes executing a run.
     /// </summary>
-    OrchestratorResult OnExecutionCompleted(string runId, string workerId, bool success, string summary);
+    Task<OrchestratorResult> OnExecutionCompletedAsync(string runId, string workerId, bool success, string summary);
 }
 

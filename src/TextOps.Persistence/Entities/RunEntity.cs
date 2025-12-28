@@ -17,7 +17,6 @@ public sealed class RunEntity
     public DateTimeOffset UpdatedAt { get; set; }
     public int Version { get; set; } = 1;
 
-    // Navigation property
     public ICollection<RunEventEntity> Events { get; set; } = new List<RunEventEntity>();
 
     public Run ToRun() => new(

@@ -1,27 +1,33 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using NUnit.Framework;
 using TextOps.Contracts.Execution;
 using TextOps.Execution;
 using TextOps.Persistence;
 
-namespace TextOps.Persistence.Tests.Queue;
+namespace TextOps.Execution.Tests;
 
 [TestFixture]
 public sealed class DatabaseExecutionQueueTests
 {
+    private SqliteConnection _connection = null!;
     private TextOpsDbContext _db = null!;
     private DatabaseExecutionQueue _queue = null!;
 
     [SetUp]
     public void SetUp()
     {
+        // Keep connection open for in-memory SQLite to persist
+        _connection = new SqliteConnection("Data Source=:memory:");
+        _connection.Open();
+
         var options = new DbContextOptionsBuilder<TextOpsDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .UseSqlite(_connection)
             .Options;
 
         _db = new TextOpsDbContext(options);
+        _db.Database.EnsureCreated();
+        
         var logger = NullLogger<DatabaseExecutionQueue>.Instance;
         _queue = new DatabaseExecutionQueue(_db, logger);
     }
@@ -30,6 +36,7 @@ public sealed class DatabaseExecutionQueueTests
     public void TearDown()
     {
         _db.Dispose();
+        _connection.Dispose();
     }
 
     [Test]

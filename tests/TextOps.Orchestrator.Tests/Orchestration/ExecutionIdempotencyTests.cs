@@ -6,28 +6,28 @@ namespace TextOps.Orchestrator.Tests.Orchestration;
 public sealed class ExecutionIdempotencyTests : OrchestratorTestBase
 {
     [Test]
-    public void OnExecutionStarted_CalledTwice_OnlyOneExecutionStartedEvent()
+    public async Task OnExecutionStarted_CalledTwice_OnlyOneExecutionStartedEvent()
     {
         // Arrange: create and approve run (now in Dispatching)
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "m1");
         var createIntent = TestHelpers.Parse(Parser, createMsg);
-        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await Orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "m2");
         var approveIntent = TestHelpers.Parse(Parser, approveMsg);
-        Orchestrator.HandleInbound(approveMsg, approveIntent);
+        await Orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
         // Act: call OnExecutionStarted twice
-        var result1 = Orchestrator.OnExecutionStarted(runId, "worker-1");
-        var eventTypes1 = TestHelpers.GetEventTypes(Orchestrator, runId);
+        var result1 = await Orchestrator.OnExecutionStartedAsync(runId, "worker-1");
+        var eventTypes1 = await TestHelpers.GetEventTypesAsync(Orchestrator, runId);
         var eventCount1 = eventTypes1.Length;
 
-        var result2 = Orchestrator.OnExecutionStarted(runId, "worker-2");
+        var result2 = await Orchestrator.OnExecutionStartedAsync(runId, "worker-2");
 
         // Assert: only one ExecutionStarted event, status remains Running
-        var timeline = Orchestrator.GetTimeline(runId);
-        var eventTypes2 = TestHelpers.GetEventTypes(Orchestrator, runId);
+        var timeline = await Orchestrator.GetTimelineAsync(runId);
+        var eventTypes2 = await TestHelpers.GetEventTypesAsync(Orchestrator, runId);
 
         Assert.Multiple(() =>
         {
@@ -39,30 +39,30 @@ public sealed class ExecutionIdempotencyTests : OrchestratorTestBase
     }
 
     [Test]
-    public void OnExecutionCompleted_CalledTwice_OnlyOneTerminalEvent()
+    public async Task OnExecutionCompleted_CalledTwice_OnlyOneTerminalEvent()
     {
         // Arrange: get run into Running state
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "m1");
         var createIntent = TestHelpers.Parse(Parser, createMsg);
-        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await Orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "m2");
         var approveIntent = TestHelpers.Parse(Parser, approveMsg);
-        Orchestrator.HandleInbound(approveMsg, approveIntent);
+        await Orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
-        Orchestrator.OnExecutionStarted(runId, "worker-1");
+        await Orchestrator.OnExecutionStartedAsync(runId, "worker-1");
 
         // Act: call OnExecutionCompleted twice
-        var result1 = Orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok");
-        var eventTypes1 = TestHelpers.GetEventTypes(Orchestrator, runId);
+        var result1 = await Orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: true, summary: "ok");
+        var eventTypes1 = await TestHelpers.GetEventTypesAsync(Orchestrator, runId);
         var terminalEventCount1 = eventTypes1.Count(e => e == "ExecutionSucceeded" || e == "ExecutionFailed");
 
-        var result2 = Orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok again");
+        var result2 = await Orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: true, summary: "ok again");
 
         // Assert: only one terminal event, status remains terminal
-        var timeline = Orchestrator.GetTimeline(runId);
-        var eventTypes2 = TestHelpers.GetEventTypes(Orchestrator, runId);
+        var timeline = await Orchestrator.GetTimelineAsync(runId);
+        var eventTypes2 = await TestHelpers.GetEventTypesAsync(Orchestrator, runId);
         var terminalEventCount2 = eventTypes2.Count(e => e == "ExecutionSucceeded" || e == "ExecutionFailed");
 
         Assert.Multiple(() =>
@@ -75,29 +75,29 @@ public sealed class ExecutionIdempotencyTests : OrchestratorTestBase
     }
 
     [Test]
-    public void OnExecutionCompleted_CalledTwice_DifferentSuccessValues_FirstWins()
+    public async Task OnExecutionCompleted_CalledTwice_DifferentSuccessValues_FirstWins()
     {
         // Arrange: get run into Running state
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "m1");
         var createIntent = TestHelpers.Parse(Parser, createMsg);
-        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await Orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "m2");
         var approveIntent = TestHelpers.Parse(Parser, approveMsg);
-        Orchestrator.HandleInbound(approveMsg, approveIntent);
+        await Orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
-        Orchestrator.OnExecutionStarted(runId, "worker-1");
+        await Orchestrator.OnExecutionStartedAsync(runId, "worker-1");
 
         // Act: complete with success first, then try failure
-        Orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "succeeded");
-        var timeline1 = Orchestrator.GetTimeline(runId);
+        await Orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: true, summary: "succeeded");
+        var timeline1 = await Orchestrator.GetTimelineAsync(runId);
 
-        Orchestrator.OnExecutionCompleted(runId, "worker-1", success: false, summary: "failed");
+        await Orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: false, summary: "failed");
 
         // Assert: first completion wins, status remains Succeeded
-        var timeline2 = Orchestrator.GetTimeline(runId);
-        var eventTypes = TestHelpers.GetEventTypes(Orchestrator, runId);
+        var timeline2 = await Orchestrator.GetTimelineAsync(runId);
+        var eventTypes = await TestHelpers.GetEventTypesAsync(Orchestrator, runId);
 
         Assert.Multiple(() =>
         {
@@ -108,20 +108,20 @@ public sealed class ExecutionIdempotencyTests : OrchestratorTestBase
     }
 
     [Test]
-    public void HandleInbound_RunJobTwice_SameProviderMessageId_SecondIsIdempotent()
+    public async Task HandleInbound_RunJobTwice_SameProviderMessageId_SecondIsIdempotent()
     {
         // Arrange: send same message twice
         var msg = TestHelpers.CreateInboundMessage("run demo", "m1");
         var intent = TestHelpers.Parse(Parser, msg);
 
         // Act: first call
-        var result1 = Orchestrator.HandleInbound(msg, intent);
+        var result1 = await Orchestrator.HandleInboundAsync(msg, intent);
         var runId1 = result1.RunId;
-        var eventTypes1 = runId1 != null ? TestHelpers.GetEventTypes(Orchestrator, runId1) : Array.Empty<string>();
+        var eventTypes1 = runId1 != null ? await TestHelpers.GetEventTypesAsync(Orchestrator, runId1) : Array.Empty<string>();
         var runCreatedCount1 = eventTypes1.Count(e => e == "RunCreated");
 
         // Second call with same providerMessageId
-        var result2 = Orchestrator.HandleInbound(msg, intent);
+        var result2 = await Orchestrator.HandleInboundAsync(msg, intent);
 
         // Assert: second call produces no effects
         Assert.Multiple(() =>
@@ -133,7 +133,7 @@ public sealed class ExecutionIdempotencyTests : OrchestratorTestBase
         // Verify only one RunCreated event exists
         if (runId1 != null)
         {
-            var eventTypes2 = TestHelpers.GetEventTypes(Orchestrator, runId1);
+            var eventTypes2 = await TestHelpers.GetEventTypesAsync(Orchestrator, runId1);
             var runCreatedCount2 = eventTypes2.Count(e => e == "RunCreated");
             Assert.That(runCreatedCount2, Is.EqualTo(1), "Should have exactly one RunCreated event");
             Assert.That(runCreatedCount2, Is.EqualTo(runCreatedCount1), "Event count should not change");

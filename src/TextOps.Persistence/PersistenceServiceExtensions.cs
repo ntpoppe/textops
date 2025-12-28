@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using TextOps.Contracts.Persistence;
 using TextOps.Persistence.Repositories;
 
 namespace TextOps.Persistence;
@@ -17,7 +18,7 @@ public static class PersistenceServiceExtensions
         services.AddDbContext<TextOpsDbContext>(options =>
             options.UseSqlite(connectionString));
 
-        services.AddScoped<IRunRepository, EfRunRepository>();
+        services.AddScoped<IRunRepository, EntityFrameworkRunRepository>();
 
         return services;
     }
@@ -30,7 +31,7 @@ public static class PersistenceServiceExtensions
         services.AddDbContext<TextOpsDbContext>(options =>
             options.UseNpgsql(connectionString));
 
-        services.AddScoped<IRunRepository, EfRunRepository>();
+        services.AddScoped<IRunRepository, EntityFrameworkRunRepository>();
 
         return services;
     }

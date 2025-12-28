@@ -25,9 +25,9 @@ TextOps is a human-governed job orchestration platform that enables users to run
 - Background service processes execution queue asynchronously
 
 **Worker Execution:**
-- In-memory execution queue using `System.Threading.Channels`
-- `Worker.Stub` simulates job execution (1-2 second delay)
-- Execution lifecycle callbacks (`OnExecutionStarted`, `OnExecutionCompleted`)
+- Database-backed execution queue using PostgreSQL `FOR UPDATE SKIP LOCKED`
+- `TextOps.Worker` polls queue, claims work, and executes jobs
+- Execution lifecycle callbacks (`OnExecutionStartedAsync`, `OnExecutionCompletedAsync`)
 - Completion notifications emitted to original conversation
 
 **Persistence:**
@@ -63,12 +63,18 @@ TextOps is a human-governed job orchestration platform that enables users to run
 - **`TextOps.Persistence`**: Database layer
   - `TextOpsDbContext`: EF Core context supporting SQLite and PostgreSQL
   - `EfRunRepository`: Persists runs, events, and inbox deduplication
-  - Entity mappings for `Run`, `RunEvent`, `InboxEntry`
+  - Entity mappings for `Run`, `RunEvent`, `InboxEntry`, `ExecutionQueue`
+- **`TextOps.Execution`**: Execution infrastructure
+  - `DatabaseExecutionQueue`: Database-backed execution queue (production)
+  - `InMemoryExecutionQueue`: In-memory execution queue (testing)
 - **`TextOps.Channels.DevApi`**: HTTP channel adapter (translation only, no business logic)
   - Controllers translate HTTP ↔ domain contracts
-  - Background service processes execution queue
-- **`TextOps.Worker.Stub`**: Execution simulation
-  - `StubWorkerExecutor`: Simulates job execution and reports results to orchestrator
+  - Enqueues execution dispatches to database queue
+- **`TextOps.Worker`**: Worker infrastructure
+  - Polls database queue for work
+  - Claims dispatches atomically
+  - Executes jobs via registered `IWorkerExecutor` implementation
+  - Handles retries and stale lock recovery
 
 ### Flow Diagram
 
@@ -91,18 +97,18 @@ PersistentRunOrchestrator.HandleInbound()
       ├─ OutboundMessage[] (for DevApi to log)
       └─ ExecutionDispatch? (if approved)
           ↓
-          InMemoryExecutionQueue.Enqueue()
+          DatabaseExecutionQueue.EnqueueAsync()
           ↓
-          ExecutionHostedService (BackgroundService)
+          WorkerHostedService (separate process)
           ↓
-          StubWorkerExecutor.ExecuteAsync()
-          ├─ OnExecutionStarted(runId, workerId)
-          ├─ Simulate work (Task.Delay)
-          └─ OnExecutionCompleted(runId, success, summary)
+          IWorkerExecutor.ExecuteAsync()
+          ├─ OnExecutionStartedAsync(runId, workerId)
+          ├─ Execute job (via IWorkerExecutor implementation)
+          └─ OnExecutionCompletedAsync(runId, success, summary)
               ↓
               OrchestratorResult with completion OutboundMessage
               ↓
-              DevApi logs: "OUTBOUND (dev): Run ABC123 succeeded: ..."
+              Worker logs: "OUTBOUND (dev): Run ABC123 succeeded: ..."
 ```
 
 ### Why It's Built This Way
@@ -209,7 +215,7 @@ curl -X POST http://localhost:5048/dev/inbound \
 }
 ```
 
-**What happens**: The orchestrator transitions the run to `Dispatching`, emits an approval message, and returns an `ExecutionDispatch`. DevApi enqueues it to the in-memory queue. The background service picks it up, calls `Worker.Stub`, which simulates execution and reports `OnExecutionStarted` → `OnExecutionCompleted`. Completion messages are logged to the console: `OUTBOUND (dev): Run ABC123 succeeded: Job 'demo' completed successfully`
+**What happens**: The orchestrator transitions the run to `Dispatching`, emits an approval message, and returns an `ExecutionDispatch`. DevApi enqueues it to the database queue. A separate `TextOps.Worker` process polls the queue, claims the dispatch, and executes it via the registered `IWorkerExecutor`. The executor reports `OnExecutionStartedAsync` → `OnExecutionCompletedAsync`. Completion messages are logged: `OUTBOUND (dev): Run ABC123 succeeded: Job 'demo' completed successfully`
 
 #### 3. Check Run Status
 
@@ -402,7 +408,7 @@ src/
 │
 ├── TextOps.Persistence/        # Database layer (EF Core)
 │   ├── Entities/               # RunEntity, RunEventEntity, InboxEntryEntity
-│   ├── Repositories/           # EfRunRepository, IRunRepository
+│   ├── Repositories/           # EfRunRepository (implements IRunRepository from Contracts)
 │   └── TextOpsDbContext.cs     # SQLite/PostgreSQL support
 │
 ├── TextOps.Channels.DevApi/    # HTTP channel adapter
@@ -410,13 +416,13 @@ src/
 │   ├── Dtos/                   # Request/response DTOs
 │   └── Program.cs              # DI registration, startup
 │
-├── TextOps.Execution/          # Execution queue
-│   ├── InMemoryExecutionQueue.cs
-│   └── ExecutionHostedService.cs
+├── TextOps.Execution/          # Execution infrastructure
+│   ├── DatabaseExecutionQueue.cs    # Database-backed queue (production)
+│   └── InMemoryExecutionQueue.cs     # In-memory queue (testing)
 │
-└── TextOps.Worker.Stub/        # Execution simulation
-    ├── IWorkerExecutor.cs
-    └── StubWorkerExecutor.cs
+└── TextOps.Worker/             # Worker infrastructure
+    ├── WorkerHostedService.cs  # Polls database queue
+    └── WorkerOptions.cs        # Configuration
 
 tests/
 ├── TextOps.Orchestrator.Tests/ # Unit tests (113 tests)

@@ -39,9 +39,9 @@ internal static class TestHelpers
         return result.RunId;
     }
 
-    public static string[] GetEventTypes(IRunOrchestrator orchestrator, string runId)
+    public static async Task<string[]> GetEventTypesAsync(IRunOrchestrator orchestrator, string runId)
     {
-        var timeline = orchestrator.GetTimeline(runId);
+        var timeline = await orchestrator.GetTimelineAsync(runId);
         return timeline.Events.Select(e => e.Type).ToArray();
     }
 }

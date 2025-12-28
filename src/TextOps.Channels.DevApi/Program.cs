@@ -4,100 +4,94 @@ using Microsoft.AspNetCore.Mvc;
 using TextOps.Contracts.Execution;
 using TextOps.Contracts.Orchestration;
 using TextOps.Contracts.Parsing;
-using TextOps.Execution;
 using TextOps.Orchestrator.Orchestration;
 using TextOps.Orchestrator.Parsing;
+using TextOps.Execution;
 using TextOps.Persistence;
-using TextOps.Persistence.Queue;
-using TextOps.Persistence.Repositories;
-using TextOps.Worker.Stub;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container
-builder.Services.AddControllers()
-    .ConfigureApiBehaviorOptions(options =>
-    {
-        // Use ProblemDetails for validation errors
-        options.InvalidModelStateResponseFactory = context =>
-        {
-            var problemDetails = new ProblemDetails
-            {
-                Title = "Validation Error",
-                Status = StatusCodes.Status400BadRequest,
-                Detail = string.Join(" ", context.ModelState
-                    .SelectMany(x => x.Value?.Errors ?? Enumerable.Empty<Microsoft.AspNetCore.Mvc.ModelBinding.ModelError>())
-                    .Select(x => x.ErrorMessage))
-            };
-            return new BadRequestObjectResult(problemDetails);
-        };
-    })
-    .AddJsonOptions(options =>
-    {
-        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-        options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
-    });
-
-// Configure persistence based on settings
-var persistenceProvider = builder.Configuration.GetValue<string>("Persistence:Provider") ?? "Sqlite";
-var connectionStrings = builder.Configuration.GetSection("Persistence:ConnectionStrings");
-string dbConnStr;
-
-if (persistenceProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
-{
-    dbConnStr = connectionStrings.GetValue<string>("Postgres")
-        ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
-    builder.Services.AddTextOpsPostgres(dbConnStr);
-}
-else
-{
-    dbConnStr = connectionStrings.GetValue<string>("Sqlite") ?? "Data Source=textops.db";
-    builder.Services.AddTextOpsSqlite(dbConnStr);
-}
-
-// Register orchestrator and parser
-builder.Services.AddScoped<IRunOrchestrator, PersistentRunOrchestrator>();
-builder.Services.AddSingleton<IIntentParser, DeterministicIntentParser>();
-
-// Configure execution queue based on settings
-var queueProvider = builder.Configuration.GetValue<string>("Queue:Provider") ?? "InMemory";
-if (queueProvider.Equals("Database", StringComparison.OrdinalIgnoreCase))
-{
-    // Database queue - dispatches are stored in DB, processed by standalone worker
-    builder.Services.AddScoped<IExecutionQueue, DatabaseExecutionQueue>();
-    builder.Services.AddScoped<IExecutionDispatcher>(sp => sp.GetRequiredService<IExecutionQueue>());
-    
-    // No local worker - standalone TextOps.Worker polls the database
-}
-else
-{
-    // In-memory queue - dispatches processed in-process (development mode)
-    builder.Services.AddSingleton<InMemoryExecutionQueue>();
-    builder.Services.AddSingleton<IExecutionQueue>(sp => sp.GetRequiredService<InMemoryExecutionQueue>());
-    builder.Services.AddSingleton<IExecutionDispatcher>(sp => sp.GetRequiredService<InMemoryExecutionQueue>());
-    
-    // Register stub worker executor for in-process execution
-    builder.Services.AddScoped<IWorkerExecutor>(sp =>
-    {
-        var orchestrator = sp.GetRequiredService<IRunOrchestrator>();
-        return new StubWorkerExecutor(orchestrator);
-    });
-    
-    // Register execution hosted service for in-process queue processing
-    builder.Services.AddHostedService<ExecutionHostedService>();
-}
+ConfigureControllers(builder.Services);
+var databaseConnectionString = ConfigurePersistence(builder.Services, builder.Configuration);
+ConfigureOrchestrator(builder.Services);
+var queueProvider = ConfigureExecutionQueue(builder.Services, builder.Configuration);
 
 var app = builder.Build();
 
-// Log configuration on startup
-var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DevApi");
-logger.LogInformation("DevApi starting with Database={Database}, Queue={Queue}", dbConnStr, queueProvider);
-
-// Ensure database is created on startup
-await app.Services.EnsureDatabaseCreatedAsync();
-
-// Configure the HTTP request pipeline
-app.UseHttpsRedirection();
-app.MapControllers();
+await ConfigureApplication(app, databaseConnectionString, queueProvider);
 
 app.Run();
+
+static void ConfigureControllers(IServiceCollection services)
+{
+    services.AddControllers()
+        .ConfigureApiBehaviorOptions(options =>
+        {
+            options.InvalidModelStateResponseFactory = context =>
+            {
+                var problemDetails = new ProblemDetails
+                {
+                    Title = "Validation Error",
+                    Status = StatusCodes.Status400BadRequest,
+                    Detail = string.Join(" ", context.ModelState
+                        .SelectMany(modelStateEntry => modelStateEntry.Value?.Errors ?? Enumerable.Empty<Microsoft.AspNetCore.Mvc.ModelBinding.ModelError>())
+                        .Select(modelError => modelError.ErrorMessage))
+                };
+                return new BadRequestObjectResult(problemDetails);
+            };
+        })
+        .AddJsonOptions(options =>
+        {
+            options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+            options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        });
+}
+
+static string ConfigurePersistence(IServiceCollection services, IConfiguration configuration)
+{
+    var persistenceProvider = configuration.GetValue<string>("Persistence:Provider") ?? "Sqlite";
+    var connectionStrings = configuration.GetSection("Persistence:ConnectionStrings");
+    
+    if (persistenceProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
+    {
+        var databaseConnectionString = connectionStrings.GetValue<string>("Postgres")
+            ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
+        services.AddTextOpsPostgres(databaseConnectionString);
+        return databaseConnectionString;
+    }
+    else
+    {
+        var databaseConnectionString = connectionStrings.GetValue<string>("Sqlite") ?? "Data Source=textops.db";
+        services.AddTextOpsSqlite(databaseConnectionString);
+        return databaseConnectionString;
+    }
+}
+
+static void ConfigureOrchestrator(IServiceCollection services)
+{
+    services.AddScoped<IRunOrchestrator, PersistentRunOrchestrator>();
+    services.AddSingleton<IIntentParser, DeterministicIntentParser>();
+}
+
+static string ConfigureExecutionQueue(IServiceCollection services, IConfiguration configuration)
+{
+    services.AddScoped<IExecutionQueue, DatabaseExecutionQueue>();
+    return "Database";
+}
+
+static async Task ConfigureApplication(WebApplication app, string databaseConnectionString, string queueProvider)
+{
+    var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DevApi");
+    logger.LogInformation("DevApi starting with Database={Database}, Queue={Queue}", databaseConnectionString, queueProvider);
+    
+    await app.Services.EnsureDatabaseCreatedAsync();
+    
+    // Only enable HTTPS redirection in non-development environments or when HTTPS is explicitly configured
+    var environment = app.Environment;
+    if (!environment.IsDevelopment() || app.Configuration["ASPNETCORE_HTTPS_PORT"] != null)
+    {
+        app.UseHttpsRedirection();
+    }
+    
+    app.MapControllers();
+}

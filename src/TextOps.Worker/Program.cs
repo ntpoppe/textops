@@ -1,56 +1,60 @@
-using Microsoft.Extensions.Logging;
 using TextOps.Contracts.Execution;
 using TextOps.Contracts.Orchestration;
 using TextOps.Orchestrator.Orchestration;
+using TextOps.Execution;
 using TextOps.Persistence;
-using TextOps.Persistence.Queue;
-using TextOps.Persistence.Repositories;
 using TextOps.Worker;
-using TextOps.Worker.Stub;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Configure worker options
-builder.Services.Configure<WorkerOptions>(
-    builder.Configuration.GetSection("Worker"));
-
-// Configure persistence (same as DevApi)
-var persistenceProvider = builder.Configuration.GetValue<string>("Persistence:Provider") ?? "Sqlite";
-var connectionStrings = builder.Configuration.GetSection("Persistence:ConnectionStrings");
-string dbConnStr;
-
-if (persistenceProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
-{
-    dbConnStr = connectionStrings.GetValue<string>("Postgres")
-        ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
-    builder.Services.AddTextOpsPostgres(dbConnStr);
-}
-else
-{
-    dbConnStr = connectionStrings.GetValue<string>("Sqlite") ?? "Data Source=textops.db";
-    builder.Services.AddTextOpsSqlite(dbConnStr);
-}
-
-// Register database queue
-builder.Services.AddScoped<IExecutionQueue, DatabaseExecutionQueue>();
-
-// Register orchestrator (for execution callbacks)
-builder.Services.AddScoped<IRunOrchestrator, PersistentRunOrchestrator>();
-
-// Register stub executor (replace with real executor in production)
-builder.Services.AddScoped<IWorkerExecutor, StubWorkerExecutor>();
-
-// Register worker hosted service
-builder.Services.AddHostedService<WorkerHostedService>();
+ConfigureWorkerOptions(builder.Services, builder.Configuration);
+var databaseConnectionString = ConfigurePersistence(builder.Services, builder.Configuration);
+ConfigureServices(builder.Services);
 
 var host = builder.Build();
 
-// Log configuration on startup
-var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Worker");
-logger.LogInformation("Worker starting with Database={Database}", dbConnStr);
-
-// Ensure database exists (tables must be created by DevApi first or via migrations)
-await host.Services.EnsureDatabaseCreatedAsync();
+await ConfigureApplication(host, databaseConnectionString);
 
 host.Run();
+
+static void ConfigureWorkerOptions(IServiceCollection services, IConfiguration configuration)
+{
+    services.Configure<WorkerOptions>(configuration.GetSection("Worker"));
+}
+
+static string ConfigurePersistence(IServiceCollection services, IConfiguration configuration)
+{
+    var persistenceProvider = configuration.GetValue<string>("Persistence:Provider") ?? "Sqlite";
+    var connectionStrings = configuration.GetSection("Persistence:ConnectionStrings");
+    
+    if (persistenceProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
+    {
+        var databaseConnectionString = connectionStrings.GetValue<string>("Postgres")
+            ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
+        services.AddTextOpsPostgres(databaseConnectionString);
+        return databaseConnectionString;
+    }
+    else
+    {
+        var databaseConnectionString = connectionStrings.GetValue<string>("Sqlite") ?? "Data Source=textops.db";
+        services.AddTextOpsSqlite(databaseConnectionString);
+        return databaseConnectionString;
+    }
+}
+
+static void ConfigureServices(IServiceCollection services)
+{
+    services.AddScoped<IExecutionQueue, DatabaseExecutionQueue>();
+    services.AddScoped<IRunOrchestrator, PersistentRunOrchestrator>();
+    services.AddScoped<IWorkerExecutor, StubWorkerExecutor>();
+    services.AddHostedService<WorkerHostedService>();
+}
+
+static async Task ConfigureApplication(IHost host, string databaseConnectionString)
+{
+    var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Worker");
+    logger.LogInformation("Worker starting with Database={Database}", databaseConnectionString);
+    
+    await host.Services.EnsureDatabaseCreatedAsync();
+}
 

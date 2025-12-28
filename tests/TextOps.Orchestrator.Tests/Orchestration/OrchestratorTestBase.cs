@@ -18,16 +18,17 @@ public abstract class OrchestratorTestBase
     protected IIntentParser Parser { get; private set; } = null!;
 
     [SetUp]
-    public virtual void SetUp()
+    public virtual Task SetUpAsync()
     {
         var options = new DbContextOptionsBuilder<TextOpsDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
             .Options;
 
         Db = new TextOpsDbContext(options);
-        var repository = new EfRunRepository(Db);
+        var repository = new EntityFrameworkRunRepository(Db);
         Orchestrator = new PersistentRunOrchestrator(repository);
         Parser = new DeterministicIntentParser();
+        return Task.CompletedTask;
     }
 
     [TearDown]

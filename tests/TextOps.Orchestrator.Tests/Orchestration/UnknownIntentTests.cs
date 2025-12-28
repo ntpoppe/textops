@@ -4,12 +4,12 @@ namespace TextOps.Orchestrator.Tests.Orchestration;
 public class UnknownIntentTests : OrchestratorTestBase
 {
     [Test]
-    public void HandleInbound_UnknownIntent_ReturnsHelpMessage()
+    public async Task HandleInbound_UnknownIntent_ReturnsHelpMessage()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "junk input", providerMessageId: $"unknown-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
         var outbound = result.Outbound[0];
         Assert.Multiple(() =>
