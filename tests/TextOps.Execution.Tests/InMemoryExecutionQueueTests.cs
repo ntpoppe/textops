@@ -20,7 +20,7 @@ public sealed class InMemoryExecutionQueueTests
     {
         var dispatch = new ExecutionDispatch("run-1", "test-job");
         
-        _queue.Enqueue(dispatch);
+        await _queue.EnqueueAsync(dispatch);
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
         Assert.That(claimed, Is.Not.Null);
@@ -31,9 +31,9 @@ public sealed class InMemoryExecutionQueueTests
     [Test]
     public async Task ClaimNextAsync_ReturnsDispatchesInOrder()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "job-1"));
-        _queue.Enqueue(new ExecutionDispatch("run-2", "job-2"));
-        _queue.Enqueue(new ExecutionDispatch("run-3", "job-3"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "job-1"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-2", "job-2"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-3", "job-3"));
 
         var claim1 = await _queue.ClaimNextAsync("worker-1");
         var claim2 = await _queue.ClaimNextAsync("worker-1");
@@ -47,7 +47,7 @@ public sealed class InMemoryExecutionQueueTests
     [Test]
     public async Task CompleteAsync_RemovesFromProcessing()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "test-job"));
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
         await _queue.CompleteAsync(claimed!.QueueId, success: true, errorMessage: null);
@@ -59,7 +59,7 @@ public sealed class InMemoryExecutionQueueTests
     [Test]
     public async Task ReleaseAsync_RequeuesWithIncrementedAttempts()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "test-job"));
         
         var claim1 = await _queue.ClaimNextAsync("worker-1");
         Assert.That(claim1!.Attempts, Is.EqualTo(1));

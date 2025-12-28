@@ -39,7 +39,7 @@ public sealed class DevInboundController : ControllerBase
         var providerMessageId = EnsureProviderMessageId(request.ProviderMessageId);
         var inboundMessage = BuildInboundMessage(request, providerMessageId);
         var (parsedIntent, orchestratorResult) = await ProcessInboundMessageAsync(inboundMessage);
-        EnqueueDispatchIfPresent(orchestratorResult);
+        await EnqueueDispatchIfPresentAsync(orchestratorResult);
         var response = MapToResponse(parsedIntent, orchestratorResult);
 
         return Ok(response);
@@ -81,11 +81,11 @@ public sealed class DevInboundController : ControllerBase
         return (parsedIntent, orchestratorResult);
     }
 
-    private void EnqueueDispatchIfPresent(OrchestratorResult orchestratorResult)
+    private async Task EnqueueDispatchIfPresentAsync(OrchestratorResult orchestratorResult)
     {
         if (orchestratorResult.Dispatch != null)
         {
-            _executionDispatcher.Enqueue(orchestratorResult.Dispatch);
+            await _executionDispatcher.EnqueueAsync(orchestratorResult.Dispatch);
         }
     }
 

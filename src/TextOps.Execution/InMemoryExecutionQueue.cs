@@ -25,11 +25,12 @@ public sealed class InMemoryExecutionQueue : IExecutionQueue
         _channel = Channel.CreateBounded<QueuedDispatch>(options);
     }
 
-    public void Enqueue(ExecutionDispatch executionDispatch)
+    public Task EnqueueAsync(ExecutionDispatch executionDispatch, CancellationToken cancellationToken = default)
     {
         var id = Interlocked.Increment(ref _nextId);
         var queuedDispatch = new QueuedDispatch(id, executionDispatch.RunId, executionDispatch.JobKey, Attempts: 1);
         _channel.Writer.TryWrite(queuedDispatch);
+        return Task.CompletedTask;
     }
 
     public async Task<QueuedDispatch?> ClaimNextAsync(string workerId, CancellationToken cancellationToken = default)

@@ -21,11 +21,6 @@ public sealed class DatabaseExecutionQueue : IExecutionQueue
         _logger = logger;
     }
 
-    public void Enqueue(ExecutionDispatch dispatch)
-    {
-        EnqueueAsync(dispatch).GetAwaiter().GetResult();
-    }
-
     /// <summary>
     /// Enqueues a dispatch if not already pending/processing for this RunId.
     /// </summary>

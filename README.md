@@ -97,7 +97,7 @@ PersistentRunOrchestrator.HandleInbound()
       ├─ OutboundMessage[] (for DevApi to log)
       └─ ExecutionDispatch? (if approved)
           ↓
-          DatabaseExecutionQueue.Enqueue()
+          DatabaseExecutionQueue.EnqueueAsync()
           ↓
           WorkerHostedService (separate process)
           ↓

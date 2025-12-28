@@ -37,7 +37,7 @@ public sealed class DatabaseExecutionQueueTests
     {
         var dispatch = new ExecutionDispatch("run-1", "test-job");
         
-        _queue.Enqueue(dispatch);
+        await _queue.EnqueueAsync(dispatch);
         
         var entry = await _db.ExecutionQueue.FirstOrDefaultAsync();
         Assert.That(entry, Is.Not.Null);
@@ -51,8 +51,8 @@ public sealed class DatabaseExecutionQueueTests
     {
         var dispatch = new ExecutionDispatch("run-1", "test-job");
         
-        _queue.Enqueue(dispatch);
-        _queue.Enqueue(dispatch);
+        await _queue.EnqueueAsync(dispatch);
+        await _queue.EnqueueAsync(dispatch);
         
         var count = await _db.ExecutionQueue.CountAsync();
         Assert.That(count, Is.EqualTo(1));
@@ -61,9 +61,9 @@ public sealed class DatabaseExecutionQueueTests
     [Test]
     public async Task ClaimNextAsync_ReturnsOldestPendingEntry()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "job-1"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "job-1"));
         await Task.Delay(10); // Ensure different timestamps
-        _queue.Enqueue(new ExecutionDispatch("run-2", "job-2"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-2", "job-2"));
 
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
@@ -83,7 +83,7 @@ public sealed class DatabaseExecutionQueueTests
     [Test]
     public async Task ClaimNextAsync_SetsProcessingStatus()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "test-job"));
         
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
@@ -96,8 +96,8 @@ public sealed class DatabaseExecutionQueueTests
     [Test]
     public async Task ClaimNextAsync_SkipsAlreadyProcessingEntries()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "job-1"));
-        _queue.Enqueue(new ExecutionDispatch("run-2", "job-2"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "job-1"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-2", "job-2"));
         
         await _queue.ClaimNextAsync("worker-1");
         var secondClaim = await _queue.ClaimNextAsync("worker-2");
@@ -109,7 +109,7 @@ public sealed class DatabaseExecutionQueueTests
     [Test]
     public async Task CompleteAsync_MarkesEntryAsCompleted()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "test-job"));
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
         await _queue.CompleteAsync(claimed!.QueueId, success: true, errorMessage: null);
@@ -124,7 +124,7 @@ public sealed class DatabaseExecutionQueueTests
     [Test]
     public async Task CompleteAsync_MarksEntryAsFailedWithError()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "test-job"));
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
         await _queue.CompleteAsync(claimed!.QueueId, success: false, errorMessage: "Something went wrong");
@@ -137,7 +137,7 @@ public sealed class DatabaseExecutionQueueTests
     [Test]
     public async Task ReleaseAsync_ReturnsEntryToPending()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "test-job"));
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
         await _queue.ReleaseAsync(claimed!.QueueId, errorMessage: "Retrying");
@@ -152,7 +152,7 @@ public sealed class DatabaseExecutionQueueTests
     [Test]
     public async Task ReclaimStaleAsync_ReclaimsOldLockedEntries()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "test-job"));
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
         // Manually set the lock time to the past
@@ -170,7 +170,7 @@ public sealed class DatabaseExecutionQueueTests
     [Test]
     public async Task ReclaimStaleAsync_DoesNotReclaimRecentLocks()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "test-job"));
         await _queue.ClaimNextAsync("worker-1");
         
         var reclaimed = await _queue.ReclaimStaleAsync(TimeSpan.FromMinutes(5));
@@ -185,7 +185,7 @@ public sealed class DatabaseExecutionQueueTests
     {
         for (int i = 1; i <= 5; i++)
         {
-            _queue.Enqueue(new ExecutionDispatch($"run-{i}", $"job-{i}"));
+            await _queue.EnqueueAsync(new ExecutionDispatch($"run-{i}", $"job-{i}"));
         }
 
         var claims = new List<QueuedDispatch?>();
@@ -203,7 +203,7 @@ public sealed class DatabaseExecutionQueueTests
     [Test]
     public async Task ClaimNextAsync_IncrementsAttemptCount()
     {
-        _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
+        await _queue.EnqueueAsync(new ExecutionDispatch("run-1", "test-job"));
         
         var claim1 = await _queue.ClaimNextAsync("worker-1");
         Assert.That(claim1!.Attempts, Is.EqualTo(1));

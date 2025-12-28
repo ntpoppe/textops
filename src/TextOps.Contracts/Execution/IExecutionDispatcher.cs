@@ -8,6 +8,6 @@ public interface IExecutionDispatcher
     /// <summary>
     /// Enqueues an execution dispatch request.
     /// </summary>
-    void Enqueue(ExecutionDispatch dispatch);
+    Task EnqueueAsync(ExecutionDispatch dispatch, CancellationToken cancellationToken = default);
 }
 
