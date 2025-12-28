@@ -58,20 +58,32 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
 
     private async Task<OrchestratorResult> HandleInboundAsync(InboundMessage msg, ParsedIntent intent)
     {
-        // Idempotency guard
-        if (await _repository.IsInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId))
+        if (await IsInboundDuplicate(msg))
         {
-            // Duplicate delivery -> no effects
-            return new OrchestratorResult(
-                RunId: null,
-                Outbound: Array.Empty<OutboundMessage>(),
-                DispatchedExecution: false,
-                Dispatch: null
-            );
+            return CreateDuplicateInboundResult();
         }
 
-        // Route by intent
-        var result = intent.Type switch
+        return await RouteByIntent(msg, intent);
+    }
+
+    private async Task<bool> IsInboundDuplicate(InboundMessage msg)
+    {
+        return await _repository.IsInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId);
+    }
+
+    private static OrchestratorResult CreateDuplicateInboundResult()
+    {
+        return new OrchestratorResult(
+            RunId: null,
+            Outbound: Array.Empty<OutboundMessage>(),
+            DispatchedExecution: false,
+            Dispatch: null
+        );
+    }
+
+    private async Task<OrchestratorResult> RouteByIntent(InboundMessage msg, ParsedIntent intent)
+    {
+        return intent.Type switch
         {
             IntentType.RunJob => await HandleRunJobAsync(msg, intent),
             IntentType.ApproveRun => await HandleApproveAsync(msg, intent),
@@ -79,8 +91,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             IntentType.Status => await HandleStatusAsync(msg, intent),
             _ => await HandleUnknownAsync(msg)
         };
-
-        return result;
     }
 
     private async Task<OrchestratorResult> HandleRunJobAsync(InboundMessage msg, ParsedIntent intent)
@@ -93,36 +103,48 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
 
         var now = DateTimeOffset.UtcNow;
         var runId = NewRunId();
+        var run = CreateRun(runId, intent.JobKey!, msg, now);
+        var events = CreateRunCreationEvents(runId, msg, now, run.JobKey);
 
-        var run = new Run(
+        await _repository.CreateRunAsync(run, events);
+        await _repository.MarkInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId, runId);
+
+        var outbound = CreateApprovalRequestMessage(msg, runId, run.JobKey);
+        return new OrchestratorResult(runId, new[] { outbound }, DispatchedExecution: false, Dispatch: null);
+    }
+
+    private static Run CreateRun(string runId, string jobKey, InboundMessage msg, DateTimeOffset now)
+    {
+        return new Run(
             RunId: runId,
-            JobKey: intent.JobKey!,
+            JobKey: jobKey,
             Status: RunStatus.AwaitingApproval,
             CreatedAt: now,
             RequestedByAddress: msg.From.Value,
             ChannelId: msg.ChannelId,
             ConversationId: msg.Conversation.Value
         );
+    }
 
-        var events = new[]
+    private static RunEvent[] CreateRunCreationEvents(string runId, InboundMessage msg, DateTimeOffset now, string jobKey)
+    {
+        return new[]
         {
-            new RunEvent(runId, "RunCreated", now, ActorFrom(msg), new { run.JobKey }),
+            new RunEvent(runId, "RunCreated", now, ActorFrom(msg), new { JobKey = jobKey }),
             new RunEvent(runId, "ApprovalRequested", now, "system", new { Policy = "DefaultRequireApproval" })
         };
+    }
 
-        await _repository.CreateRunAsync(run, events);
-        await _repository.MarkInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId, runId);
-
-        var outbound = new OutboundMessage(
+    private static OutboundMessage CreateApprovalRequestMessage(InboundMessage msg, string runId, string jobKey)
+    {
+        return new OutboundMessage(
             ChannelId: msg.ChannelId,
             Conversation: msg.Conversation,
             To: null,
-            Body: $"Job \"{run.JobKey}\" is ready. Reply YES {runId} to approve or NO {runId} to deny.",
+            Body: $"Job \"{jobKey}\" is ready. Reply YES {runId} to approve or NO {runId} to deny.",
             CorrelationId: runId,
             IdempotencyKey: $"approval-request:{runId}"
         );
-
-        return new OrchestratorResult(runId, new[] { outbound }, DispatchedExecution: false, Dispatch: null);
     }
 
     private async Task<OrchestratorResult> HandleApproveAsync(InboundMessage msg, ParsedIntent intent)
@@ -139,11 +161,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             return Reply(msg, runId: null, $"Unknown run id: {runId}");
 
         var now = DateTimeOffset.UtcNow;
-        var events = new[]
-        {
-            new RunEvent(runId, "RunApproved", now, ActorFrom(msg), new { }),
-            new RunEvent(runId, "ExecutionDispatched", now, "system", new { })
-        };
+        var events = CreateApprovalEvents(runId, msg, now);
 
         var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.AwaitingApproval, RunStatus.Dispatching, events);
 
@@ -153,7 +171,23 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             return Reply(msg, runId: run.RunId, $"Cannot approve run {run.RunId} in state {currentStatus}.");
         }
 
-        var outbound = new OutboundMessage(
+        var outbound = CreateApprovalMessage(updatedRun);
+        var dispatch = new ExecutionDispatch(updatedRun.RunId, updatedRun.JobKey);
+        return new OrchestratorResult(updatedRun.RunId, new[] { outbound }, DispatchedExecution: true, Dispatch: dispatch);
+    }
+
+    private static RunEvent[] CreateApprovalEvents(string runId, InboundMessage msg, DateTimeOffset now)
+    {
+        return new[]
+        {
+            new RunEvent(runId, "RunApproved", now, ActorFrom(msg), new { }),
+            new RunEvent(runId, "ExecutionDispatched", now, "system", new { })
+        };
+    }
+
+    private static OutboundMessage CreateApprovalMessage(Run updatedRun)
+    {
+        return new OutboundMessage(
             ChannelId: updatedRun.ChannelId,
             Conversation: new ConversationId(updatedRun.ConversationId),
             To: null,
@@ -161,9 +195,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             CorrelationId: updatedRun.RunId,
             IdempotencyKey: $"approved-starting:{updatedRun.RunId}"
         );
-
-        var dispatch = new ExecutionDispatch(updatedRun.RunId, updatedRun.JobKey);
-        return new OrchestratorResult(updatedRun.RunId, new[] { outbound }, DispatchedExecution: true, Dispatch: dispatch);
     }
 
     private async Task<OrchestratorResult> HandleDenyAsync(InboundMessage msg, ParsedIntent intent)
@@ -180,10 +211,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             return Reply(msg, runId: null, $"Unknown run id: {runId}");
 
         var now = DateTimeOffset.UtcNow;
-        var events = new[]
-        {
-            new RunEvent(runId, "RunDenied", now, ActorFrom(msg), new { })
-        };
+        var events = CreateDenialEvents(runId, msg, now);
 
         var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.AwaitingApproval, RunStatus.Denied, events);
 
@@ -193,7 +221,21 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             return Reply(msg, runId: run.RunId, $"Cannot deny run {run.RunId} in state {currentStatus}.");
         }
 
-        return Reply(msg, runId: updatedRun.RunId, $"Denied run {updatedRun.RunId} for job \"{updatedRun.JobKey}\".");
+        var denialMessage = CreateDenialMessage(updatedRun);
+        return Reply(msg, runId: updatedRun.RunId, denialMessage);
+    }
+
+    private static RunEvent[] CreateDenialEvents(string runId, InboundMessage msg, DateTimeOffset now)
+    {
+        return new[]
+        {
+            new RunEvent(runId, "RunDenied", now, ActorFrom(msg), new { })
+        };
+    }
+
+    private static string CreateDenialMessage(Run updatedRun)
+    {
+        return $"Denied run {updatedRun.RunId} for job \"{updatedRun.JobKey}\".";
     }
 
     private async Task<OrchestratorResult> HandleStatusAsync(InboundMessage msg, ParsedIntent intent)
@@ -242,45 +284,61 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         var run = await _repository.GetRunAsync(runId);
         if (run == null)
         {
-            var errorOutbound = new OutboundMessage(
-                ChannelId: "system",
-                Conversation: new ConversationId("system"),
-                To: null,
-                Body: $"Error: Cannot start execution for unknown run {runId}.",
-                CorrelationId: runId,
-                IdempotencyKey: $"execution-started-error:{runId}"
-            );
-            return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+            return CreateUnknownRunStartError(runId);
         }
 
         var now = DateTimeOffset.UtcNow;
-        var events = new[]
-        {
-            new RunEvent(runId, "ExecutionStarted", now, $"worker:{workerId}", new { WorkerId = workerId })
-        };
+        var events = CreateExecutionStartedEvent(runId, workerId, now);
 
         var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.Dispatching, RunStatus.Running, events);
 
         if (updatedRun == null)
         {
-            var currentStatus = await _repository.GetRunStatusAsync(runId);
-
-            // Idempotency: if already Running, treat as no-op
-            if (currentStatus == RunStatus.Running)
-                return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
-
-            var errorOutbound = new OutboundMessage(
-                ChannelId: run.ChannelId,
-                Conversation: new ConversationId(run.ConversationId),
-                To: null,
-                Body: $"Cannot start run {runId} in state {currentStatus}.",
-                CorrelationId: runId,
-                IdempotencyKey: $"execution-started-error-state:{runId}"
-            );
-            return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+            return await HandleExecutionStartedError(runId, run);
         }
 
         return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
+    }
+
+    private static OrchestratorResult CreateUnknownRunStartError(string runId)
+    {
+        var errorOutbound = new OutboundMessage(
+            ChannelId: "system",
+            Conversation: new ConversationId("system"),
+            To: null,
+            Body: $"Error: Cannot start execution for unknown run {runId}.",
+            CorrelationId: runId,
+            IdempotencyKey: $"execution-started-error:{runId}"
+        );
+        return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+    }
+
+    private static RunEvent[] CreateExecutionStartedEvent(string runId, string workerId, DateTimeOffset now)
+    {
+        return new[]
+        {
+            new RunEvent(runId, "ExecutionStarted", now, $"worker:{workerId}", new { WorkerId = workerId })
+        };
+    }
+
+    private async Task<OrchestratorResult> HandleExecutionStartedError(string runId, Run run)
+    {
+        var currentStatus = await _repository.GetRunStatusAsync(runId);
+
+        if (currentStatus == RunStatus.Running)
+        {
+            return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
+        }
+
+        var errorOutbound = new OutboundMessage(
+            ChannelId: run.ChannelId,
+            Conversation: new ConversationId(run.ConversationId),
+            To: null,
+            Body: $"Cannot start run {runId} in state {currentStatus}.",
+            CorrelationId: runId,
+            IdempotencyKey: $"execution-started-error-state:{runId}"
+        );
+        return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
     }
 
     private async Task<OrchestratorResult> OnExecutionCompletedAsync(string runId, string workerId, bool success, string summary)
@@ -288,25 +346,11 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         var run = await _repository.GetRunAsync(runId);
         if (run == null)
         {
-            var errorOutbound = new OutboundMessage(
-                ChannelId: "system",
-                Conversation: new ConversationId("system"),
-                To: null,
-                Body: $"Error: Cannot complete execution for unknown run {runId}.",
-                CorrelationId: runId,
-                IdempotencyKey: $"execution-completed-error:{runId}"
-            );
-            return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+            return CreateUnknownRunCompletionError(runId);
         }
 
-        var newStatus = success ? RunStatus.Succeeded : RunStatus.Failed;
-        var now = DateTimeOffset.UtcNow;
-        var eventType = success ? "ExecutionSucceeded" : "ExecutionFailed";
-
-        var events = new[]
-        {
-            new RunEvent(runId, eventType, now, $"worker:{workerId}", new { WorkerId = workerId, Summary = summary })
-        };
+        var newStatus = DetermineCompletionStatus(success);
+        var events = CreateCompletionEvent(runId, workerId, success, summary);
 
         var updatedRun = await _repository.TryUpdateRunFromMultipleAsync(
             runId,
@@ -316,28 +360,73 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
 
         if (updatedRun == null)
         {
-            var currentStatus = await _repository.GetRunStatusAsync(runId);
-
-            // Idempotency: if already in terminal state, treat as no-op
-            if (currentStatus == RunStatus.Succeeded || currentStatus == RunStatus.Failed)
-                return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
-
-            var errorOutbound = new OutboundMessage(
-                ChannelId: run.ChannelId,
-                Conversation: new ConversationId(run.ConversationId),
-                To: null,
-                Body: $"Cannot complete run {runId} in state {currentStatus}.",
-                CorrelationId: runId,
-                IdempotencyKey: $"execution-completed-error-state:{runId}"
-            );
-            return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+            return await HandleCompletionError(runId, run);
         }
 
+        var completionOutbound = CreateCompletionMessage(runId, run, success, summary);
+        return new OrchestratorResult(runId, new[] { completionOutbound }, DispatchedExecution: false, Dispatch: null);
+    }
+
+    private static OrchestratorResult CreateUnknownRunCompletionError(string runId)
+    {
+        var errorOutbound = new OutboundMessage(
+            ChannelId: "system",
+            Conversation: new ConversationId("system"),
+            To: null,
+            Body: $"Error: Cannot complete execution for unknown run {runId}.",
+            CorrelationId: runId,
+            IdempotencyKey: $"execution-completed-error:{runId}"
+        );
+        return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+    }
+
+    private static RunStatus DetermineCompletionStatus(bool success)
+    {
+        return success ? RunStatus.Succeeded : RunStatus.Failed;
+    }
+
+    private static RunEvent[] CreateCompletionEvent(string runId, string workerId, bool success, string summary)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var eventType = success ? "ExecutionSucceeded" : "ExecutionFailed";
+        return new[]
+        {
+            new RunEvent(runId, eventType, now, $"worker:{workerId}", new { WorkerId = workerId, Summary = summary })
+        };
+    }
+
+    private async Task<OrchestratorResult> HandleCompletionError(string runId, Run run)
+    {
+        var currentStatus = await _repository.GetRunStatusAsync(runId);
+
+        if (IsTerminalState(currentStatus))
+        {
+            return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
+        }
+
+        var errorOutbound = new OutboundMessage(
+            ChannelId: run.ChannelId,
+            Conversation: new ConversationId(run.ConversationId),
+            To: null,
+            Body: $"Cannot complete run {runId} in state {currentStatus}.",
+            CorrelationId: runId,
+            IdempotencyKey: $"execution-completed-error-state:{runId}"
+        );
+        return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+    }
+
+    private static bool IsTerminalState(RunStatus? status)
+    {
+        return status == RunStatus.Succeeded || status == RunStatus.Failed;
+    }
+
+    private static OutboundMessage CreateCompletionMessage(string runId, Run run, bool success, string summary)
+    {
         var messageBody = success
             ? $"Run {runId} succeeded: {summary}"
             : $"Run {runId} failed: {summary}";
 
-        var completionOutbound = new OutboundMessage(
+        return new OutboundMessage(
             ChannelId: run.ChannelId,
             Conversation: new ConversationId(run.ConversationId),
             To: null,
@@ -345,8 +434,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             CorrelationId: runId,
             IdempotencyKey: $"execution-completed:{runId}"
         );
-
-        return new OrchestratorResult(runId, new[] { completionOutbound }, DispatchedExecution: false, Dispatch: null);
     }
 
     // ------------------------

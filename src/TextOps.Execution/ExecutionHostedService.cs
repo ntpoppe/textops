@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TextOps.Contracts.Execution;
+using TextOps.Contracts.Messaging;
 
 namespace TextOps.Execution;
 
@@ -33,18 +34,11 @@ public sealed class ExecutionHostedService : BackgroundService
         {
             try
             {
-                using var scope = _scopeFactory.CreateScope();
-                var queue = scope.ServiceProvider.GetRequiredService<IExecutionQueue>();
-                
-                var queued = await queue.ClaimNextAsync(_workerId, stoppingToken);
-                if (queued == null)
+                var processed = await PollForWork(stoppingToken);
+                if (!processed)
                 {
-                    // No work available, wait before polling again
                     await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
-                    continue;
                 }
-
-                await ProcessDispatchAsync(scope, queue, queued, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -52,19 +46,39 @@ public sealed class ExecutionHostedService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in execution service. Retrying in 5 seconds...");
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
+                await HandleExecutionError(ex, stoppingToken);
             }
         }
 
         _logger.LogInformation("Execution service stopped");
+    }
+
+    private async Task<bool> PollForWork(CancellationToken stoppingToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var queue = scope.ServiceProvider.GetRequiredService<IExecutionQueue>();
+        
+        var queued = await queue.ClaimNextAsync(_workerId, stoppingToken);
+        if (queued == null)
+        {
+            return false;
+        }
+
+        await ProcessDispatchAsync(scope, queue, queued, stoppingToken);
+        return true;
+    }
+
+    private async Task HandleExecutionError(Exception ex, CancellationToken stoppingToken)
+    {
+        _logger.LogError(ex, "Error in execution service. Retrying in 5 seconds...");
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown requested
+        }
     }
 
     private async Task ProcessDispatchAsync(
@@ -77,30 +91,52 @@ public sealed class ExecutionHostedService : BackgroundService
 
         try
         {
-            _logger.LogInformation(
-                "Processing execution dispatch: QueueId={QueueId}, RunId={RunId}, JobKey={JobKey}",
-                queued.QueueId, queued.RunId, queued.JobKey);
-
+            LogDispatchStart(queued);
             var dispatch = new ExecutionDispatch(queued.RunId, queued.JobKey);
             var result = await workerExecutor.ExecuteAsync(dispatch, stoppingToken);
 
-            // Log outbound messages
-            foreach (var outbound in result.Outbound)
-            {
-                _logger.LogInformation("OUTBOUND ({ChannelId}): {Body}", outbound.ChannelId, outbound.Body);
-            }
-
-            await queue.CompleteAsync(queued.QueueId, success: true, error: null, stoppingToken);
+            LogOutboundMessages(result.Outbound);
+            await HandleDispatchCompletion(queue, queued.QueueId, stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            _logger.LogWarning("Execution cancelled for dispatch: RunId={RunId}", queued.RunId);
-            await queue.ReleaseAsync(queued.QueueId, "Cancelled due to shutdown", stoppingToken);
+            await HandleDispatchCancellation(queue, queued, stoppingToken);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing execution dispatch: RunId={RunId}", queued.RunId);
-            await queue.CompleteAsync(queued.QueueId, success: false, error: ex.Message, stoppingToken);
+            await HandleDispatchError(queue, queued, ex, stoppingToken);
         }
+    }
+
+    private void LogDispatchStart(QueuedDispatch queued)
+    {
+        _logger.LogInformation(
+            "Processing execution dispatch: QueueId={QueueId}, RunId={RunId}, JobKey={JobKey}",
+            queued.QueueId, queued.RunId, queued.JobKey);
+    }
+
+    private void LogOutboundMessages(IReadOnlyList<OutboundMessage> outbound)
+    {
+        foreach (var message in outbound)
+        {
+            _logger.LogInformation("OUTBOUND ({ChannelId}): {Body}", message.ChannelId, message.Body);
+        }
+    }
+
+    private static async Task HandleDispatchCompletion(IExecutionQueue queue, long queueId, CancellationToken stoppingToken)
+    {
+        await queue.CompleteAsync(queueId, success: true, error: null, stoppingToken);
+    }
+
+    private async Task HandleDispatchCancellation(IExecutionQueue queue, QueuedDispatch queued, CancellationToken stoppingToken)
+    {
+        _logger.LogWarning("Execution cancelled for dispatch: RunId={RunId}", queued.RunId);
+        await queue.ReleaseAsync(queued.QueueId, "Cancelled due to shutdown", stoppingToken);
+    }
+
+    private async Task HandleDispatchError(IExecutionQueue queue, QueuedDispatch queued, Exception ex, CancellationToken stoppingToken)
+    {
+        _logger.LogError(ex, "Error processing execution dispatch: RunId={RunId}", queued.RunId);
+        await queue.CompleteAsync(queued.QueueId, success: false, error: ex.Message, stoppingToken);
     }
 }

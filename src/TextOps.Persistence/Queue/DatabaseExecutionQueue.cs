@@ -30,18 +30,29 @@ public sealed class DatabaseExecutionQueue : IExecutionQueue
     /// </summary>
     public async Task EnqueueAsync(ExecutionDispatch dispatch, CancellationToken ct = default)
     {
-        // Idempotency: don't enqueue if already pending or processing
-        var existing = await _db.ExecutionQueue
-            .AnyAsync(e => e.RunId == dispatch.RunId && 
-                          (e.Status == "pending" || e.Status == "processing"), ct);
-        
-        if (existing)
+        if (await IsAlreadyQueued(dispatch.RunId, ct))
         {
             _logger.LogDebug("Dispatch already queued for RunId={RunId}", dispatch.RunId);
             return;
         }
 
-        var entry = new ExecutionQueueEntity
+        var entry = CreateQueueEntry(dispatch);
+        _db.ExecutionQueue.Add(entry);
+        await _db.SaveChangesAsync(ct);
+        
+        _logger.LogInformation("Enqueued dispatch: RunId={RunId}, JobKey={JobKey}", dispatch.RunId, dispatch.JobKey);
+    }
+
+    private async Task<bool> IsAlreadyQueued(string runId, CancellationToken ct)
+    {
+        return await _db.ExecutionQueue
+            .AnyAsync(e => e.RunId == runId && 
+                          (e.Status == "pending" || e.Status == "processing"), ct);
+    }
+
+    private static ExecutionQueueEntity CreateQueueEntry(ExecutionDispatch dispatch)
+    {
+        return new ExecutionQueueEntity
         {
             RunId = dispatch.RunId,
             JobKey = dispatch.JobKey,
@@ -49,30 +60,33 @@ public sealed class DatabaseExecutionQueue : IExecutionQueue
             CreatedAt = DateTimeOffset.UtcNow,
             Attempts = 0
         };
-
-        _db.ExecutionQueue.Add(entry);
-        await _db.SaveChangesAsync(ct);
-        
-        _logger.LogInformation("Enqueued dispatch: RunId={RunId}, JobKey={JobKey}", dispatch.RunId, dispatch.JobKey);
     }
 
     public async Task<QueuedDispatch?> ClaimNextAsync(string workerId, CancellationToken ct = default)
     {
-        // Attempt atomic claim using raw SQL for PostgreSQL (FOR UPDATE SKIP LOCKED)
-        // For SQLite, we use optimistic approach: find + update
-        
-        var now = DateTimeOffset.UtcNow;
-        
-        // Find oldest pending entry 
-        var entry = await _db.ExecutionQueue
-            .Where(e => e.Status == "pending")
-            .OrderBy(e => e.Id)
-            .FirstOrDefaultAsync(ct);
-
+        var entry = await FindOldestPendingEntry(ct);
         if (entry == null)
             return null;
 
-        // Attempt to claim it
+        var claimed = await ClaimEntry(entry, workerId, ct);
+        if (claimed == null)
+            return null;
+
+        LogClaimedDispatch(claimed, workerId);
+        return new QueuedDispatch(claimed.Id, claimed.RunId, claimed.JobKey, claimed.Attempts);
+    }
+
+    private async Task<ExecutionQueueEntity?> FindOldestPendingEntry(CancellationToken ct)
+    {
+        return await _db.ExecutionQueue
+            .Where(e => e.Status == "pending")
+            .OrderBy(e => e.Id)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private async Task<ExecutionQueueEntity?> ClaimEntry(ExecutionQueueEntity entry, string workerId, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
         entry.Status = "processing";
         entry.LockedAt = now;
         entry.LockedBy = workerId;
@@ -81,19 +95,20 @@ public sealed class DatabaseExecutionQueue : IExecutionQueue
         try
         {
             await _db.SaveChangesAsync(ct);
-            
-            _logger.LogInformation(
-                "Claimed dispatch: QueueId={QueueId}, RunId={RunId}, WorkerId={WorkerId}, Attempt={Attempt}",
-                entry.Id, entry.RunId, workerId, entry.Attempts);
-            
-            return new QueuedDispatch(entry.Id, entry.RunId, entry.JobKey, entry.Attempts);
+            return entry;
         }
         catch (DbUpdateConcurrencyException)
         {
-            // Another worker claimed it first - that's fine
             _logger.LogDebug("Dispatch claimed by another worker: QueueId={QueueId}", entry.Id);
             return null;
         }
+    }
+
+    private void LogClaimedDispatch(ExecutionQueueEntity entry, string workerId)
+    {
+        _logger.LogInformation(
+            "Claimed dispatch: QueueId={QueueId}, RunId={RunId}, WorkerId={WorkerId}, Attempt={Attempt}",
+            entry.Id, entry.RunId, workerId, entry.Attempts);
     }
 
     public async Task CompleteAsync(long queueId, bool success, string? error, CancellationToken ct = default)
@@ -141,31 +156,41 @@ public sealed class DatabaseExecutionQueue : IExecutionQueue
 
     public async Task<int> ReclaimStaleAsync(TimeSpan lockTimeout, CancellationToken ct = default)
     {
-        var threshold = DateTimeOffset.UtcNow - lockTimeout;
-        
-        var processingEntries = await _db.ExecutionQueue
-            .Where(e => e.Status == "processing")
-            .ToListAsync(ct);
-
-        var staleEntries = processingEntries
-            .Where(e => e.LockedAt.HasValue && e.LockedAt.Value < threshold)
-            .ToList();
+        var staleEntries = await FindStaleEntries(lockTimeout, ct);
 
         foreach (var entry in staleEntries)
         {
-            var previousWorker = entry.LockedBy;
-            entry.Status = "pending";
-            entry.LockedAt = null;
-            entry.LockedBy = null;
-            
-            _logger.LogWarning(
-                "Reclaimed stale dispatch: QueueId={QueueId}, RunId={RunId}, PreviousWorker={Worker}",
-                entry.Id, entry.RunId, previousWorker);
+            ReclaimEntry(entry);
         }
 
         if (staleEntries.Count > 0)
             await _db.SaveChangesAsync(ct);
 
         return staleEntries.Count;
+    }
+
+    private async Task<List<ExecutionQueueEntity>> FindStaleEntries(TimeSpan lockTimeout, CancellationToken ct)
+    {
+        var threshold = DateTimeOffset.UtcNow - lockTimeout;
+        
+        var processingEntries = await _db.ExecutionQueue
+            .Where(e => e.Status == "processing")
+            .ToListAsync(ct);
+
+        return processingEntries
+            .Where(e => e.LockedAt.HasValue && e.LockedAt.Value < threshold)
+            .ToList();
+    }
+
+    private void ReclaimEntry(ExecutionQueueEntity entry)
+    {
+        var previousWorker = entry.LockedBy;
+        entry.Status = "pending";
+        entry.LockedAt = null;
+        entry.LockedBy = null;
+        
+        _logger.LogWarning(
+            "Reclaimed stale dispatch: QueueId={QueueId}, RunId={RunId}, PreviousWorker={Worker}",
+            entry.Id, entry.RunId, previousWorker);
     }
 }

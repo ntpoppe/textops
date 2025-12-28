@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TextOps.Contracts.Execution;
+using TextOps.Contracts.Messaging;
 
 namespace TextOps.Worker;
 
@@ -32,10 +33,21 @@ public sealed class WorkerHostedService : BackgroundService
     {
         _logger.LogInformation("Worker started: WorkerId={WorkerId}", _workerId);
 
-        // Start stale lock recovery task
-        var recoveryTask = RunStaleLockRecoveryAsync(stoppingToken);
+        var recoveryTask = StartRecoveryTask(stoppingToken);
 
-        // Main polling loop
+        await PollForWork(stoppingToken);
+
+        await recoveryTask;
+        _logger.LogInformation("Worker stopped: WorkerId={WorkerId}", _workerId);
+    }
+
+    private Task StartRecoveryTask(CancellationToken stoppingToken)
+    {
+        return RunStaleLockRecoveryAsync(stoppingToken);
+    }
+
+    private async Task PollForWork(CancellationToken stoppingToken)
+    {
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -44,7 +56,6 @@ public sealed class WorkerHostedService : BackgroundService
                 
                 if (!processed)
                 {
-                    // No work available, wait before polling again
                     await Task.Delay(_options.PollInterval, stoppingToken);
                 }
             }
@@ -65,9 +76,6 @@ public sealed class WorkerHostedService : BackgroundService
                 }
             }
         }
-
-        await recoveryTask;
-        _logger.LogInformation("Worker stopped: WorkerId={WorkerId}", _workerId);
     }
 
     private async Task<bool> TryProcessNextAsync(CancellationToken ct)
@@ -80,48 +88,75 @@ public sealed class WorkerHostedService : BackgroundService
         if (queued == null)
             return false;
 
-        _logger.LogInformation(
-            "Processing dispatch: QueueId={QueueId}, RunId={RunId}, JobKey={JobKey}, Attempt={Attempt}",
-            queued.QueueId, queued.RunId, queued.JobKey, queued.Attempts);
+        LogDispatchStart(queued);
 
         try
         {
             var dispatch = new ExecutionDispatch(queued.RunId, queued.JobKey);
             var result = await executor.ExecuteAsync(dispatch, ct);
 
-            // Log outbound messages (in production, route to channel adapters)
-            foreach (var outbound in result.Outbound)
-            {
-                _logger.LogInformation("OUTBOUND ({ChannelId}): {Body}", outbound.ChannelId, outbound.Body);
-            }
-
-            await queue.CompleteAsync(queued.QueueId, success: true, error: null, ct);
+            LogOutboundMessages(result.Outbound);
+            await HandleExecutionSuccess(queue, queued.QueueId, ct);
             return true;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Shutdown requested - release back to queue for another worker
-            _logger.LogWarning("Execution cancelled, releasing: RunId={RunId}", queued.RunId);
-            await queue.ReleaseAsync(queued.QueueId, "Cancelled due to shutdown", ct);
+            await HandleExecutionCancellation(queue, queued, ct);
             throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Execution failed: RunId={RunId}", queued.RunId);
-
-            if (queued.Attempts >= _options.MaxAttempts)
-            {
-                _logger.LogError(
-                    "Max attempts reached, marking failed: RunId={RunId}, Attempts={Attempts}",
-                    queued.RunId, queued.Attempts);
-                await queue.CompleteAsync(queued.QueueId, success: false, error: ex.Message, ct);
-            }
-            else
-            {
-                await queue.ReleaseAsync(queued.QueueId, ex.Message, ct);
-            }
+            await HandleExecutionFailure(queue, queued, ex, ct);
             return true;
         }
+    }
+
+    private void LogDispatchStart(QueuedDispatch queued)
+    {
+        _logger.LogInformation(
+            "Processing dispatch: QueueId={QueueId}, RunId={RunId}, JobKey={JobKey}, Attempt={Attempt}",
+            queued.QueueId, queued.RunId, queued.JobKey, queued.Attempts);
+    }
+
+    private void LogOutboundMessages(IReadOnlyList<OutboundMessage> outbound)
+    {
+        foreach (var message in outbound)
+        {
+            _logger.LogInformation("OUTBOUND ({ChannelId}): {Body}", message.ChannelId, message.Body);
+        }
+    }
+
+    private static async Task HandleExecutionSuccess(IExecutionQueue queue, long queueId, CancellationToken ct)
+    {
+        await queue.CompleteAsync(queueId, success: true, error: null, ct);
+    }
+
+    private async Task HandleExecutionCancellation(IExecutionQueue queue, QueuedDispatch queued, CancellationToken ct)
+    {
+        _logger.LogWarning("Execution cancelled, releasing: RunId={RunId}", queued.RunId);
+        await queue.ReleaseAsync(queued.QueueId, "Cancelled due to shutdown", ct);
+    }
+
+    private async Task HandleExecutionFailure(IExecutionQueue queue, QueuedDispatch queued, Exception ex, CancellationToken ct)
+    {
+        _logger.LogError(ex, "Execution failed: RunId={RunId}", queued.RunId);
+
+        if (ShouldMarkAsFailed(queued))
+        {
+            _logger.LogError(
+                "Max attempts reached, marking failed: RunId={RunId}, Attempts={Attempts}",
+                queued.RunId, queued.Attempts);
+            await queue.CompleteAsync(queued.QueueId, success: false, error: ex.Message, ct);
+        }
+        else
+        {
+            await queue.ReleaseAsync(queued.QueueId, ex.Message, ct);
+        }
+    }
+
+    private bool ShouldMarkAsFailed(QueuedDispatch queued)
+    {
+        return queued.Attempts >= _options.MaxAttempts;
     }
 
     private async Task RunStaleLockRecoveryAsync(CancellationToken ct)

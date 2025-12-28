@@ -22,7 +22,14 @@ public sealed class TextOpsDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // Runs table
+        ConfigureRunEntity(modelBuilder);
+        ConfigureRunEventEntity(modelBuilder);
+        ConfigureInboxEntryEntity(modelBuilder);
+        ConfigureExecutionQueueEntity(modelBuilder);
+    }
+
+    private static void ConfigureRunEntity(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<RunEntity>(entity =>
         {
             entity.ToTable("Runs");
@@ -38,8 +45,10 @@ public sealed class TextOpsDbContext : DbContext
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => new { e.ChannelId, e.ConversationId });
         });
+    }
 
-        // RunEvents table (append-only)
+    private static void ConfigureRunEventEntity(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<RunEventEntity>(entity =>
         {
             entity.ToTable("RunEvents");
@@ -57,8 +66,10 @@ public sealed class TextOpsDbContext : DbContext
                 .HasForeignKey(e => e.RunId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+    }
 
-        // InboxDedup table
+    private static void ConfigureInboxEntryEntity(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<InboxEntryEntity>(entity =>
         {
             entity.ToTable("InboxDedup");
@@ -67,8 +78,10 @@ public sealed class TextOpsDbContext : DbContext
             entity.Property(e => e.ProviderMessageId).HasMaxLength(500);
             entity.Property(e => e.RunId).HasMaxLength(50);
         });
+    }
 
-        // ExecutionQueue table
+    private static void ConfigureExecutionQueueEntity(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<ExecutionQueueEntity>(entity =>
         {
             entity.ToTable("ExecutionQueue");
@@ -80,9 +93,7 @@ public sealed class TextOpsDbContext : DbContext
             entity.Property(e => e.LockedBy).HasMaxLength(100);
             entity.Property(e => e.LastError).HasMaxLength(2000);
 
-            // Index for claiming: find pending entries quickly
             entity.HasIndex(e => e.Status);
-            // Index for stale lock recovery
             entity.HasIndex(e => new { e.Status, e.LockedAt });
         });
     }

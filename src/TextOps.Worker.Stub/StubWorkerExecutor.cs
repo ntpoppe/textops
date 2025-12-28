@@ -18,23 +18,33 @@ public sealed class StubWorkerExecutor : IWorkerExecutor
 
     public async Task<OrchestratorResult> ExecuteAsync(ExecutionDispatch dispatch, CancellationToken cancellationToken)
     {
-        // Report execution started
         _orchestrator.OnExecutionStarted(dispatch.RunId, WorkerId);
 
-        // Simulate work execution (1-2 seconds)
-        var delay = Random.Shared.Next(1000, 2001);
-        await Task.Delay(delay, cancellationToken);
+        await SimulateWork(cancellationToken);
 
-        // Determine success/failure based on job key
-        // For now: deterministic success unless jobKey contains "fail"
-        var success = !dispatch.JobKey.Contains("fail", StringComparison.OrdinalIgnoreCase);
-        var summary = success
-            ? $"Job '{dispatch.JobKey}' completed successfully"
-            : $"Job '{dispatch.JobKey}' failed (simulated failure)";
+        var success = DetermineSuccess(dispatch.JobKey);
+        var summary = CreateSummary(dispatch.JobKey, success);
 
-        // Report execution completed
         var result = _orchestrator.OnExecutionCompleted(dispatch.RunId, WorkerId, success, summary);
 
         return result;
+    }
+
+    private static async Task SimulateWork(CancellationToken cancellationToken)
+    {
+        var delay = Random.Shared.Next(1000, 2001);
+        await Task.Delay(delay, cancellationToken);
+    }
+
+    private static bool DetermineSuccess(string jobKey)
+    {
+        return !jobKey.Contains("fail", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string CreateSummary(string jobKey, bool success)
+    {
+        return success
+            ? $"Job '{jobKey}' completed successfully"
+            : $"Job '{jobKey}' failed (simulated failure)";
     }
 }

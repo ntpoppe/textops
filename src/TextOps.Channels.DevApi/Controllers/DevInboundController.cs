@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using TextOps.Channels.DevApi.Dtos;
 using TextOps.Contracts.Execution;
+using TextOps.Contracts.Intents;
 using TextOps.Contracts.Messaging;
 using TextOps.Contracts.Orchestration;
 using TextOps.Contracts.Parsing;
@@ -35,20 +36,33 @@ public sealed class DevInboundController : ControllerBase
             return ValidationProblem(ModelState);
         }
 
-        // Generate provider message ID if not provided
-        var providerMessageId = request.ProviderMessageId ?? Guid.NewGuid().ToString("n");
+        var providerMessageId = EnsureProviderMessageId(request.ProviderMessageId);
+        var inbound = BuildInboundMessage(request, providerMessageId);
+        var (intent, result) = ProcessInboundMessage(inbound);
+        EnqueueDispatchIfPresent(result);
+        var response = MapToResponse(intent, result);
 
-        // Prefix addresses/conversations with "dev:" if not already prefixed
-        var conversationValue = request.Conversation.StartsWith("dev:", StringComparison.OrdinalIgnoreCase)
-            ? request.Conversation
-            : $"dev:{request.Conversation}";
+        return Ok(response);
+    }
 
-        var fromValue = request.From.StartsWith("dev:", StringComparison.OrdinalIgnoreCase)
-            ? request.From
-            : $"dev:{request.From}";
+    private static string EnsureProviderMessageId(string? providerMessageId)
+    {
+        return providerMessageId ?? Guid.NewGuid().ToString("n");
+    }
 
-        // Construct InboundMessage
-        var inbound = new InboundMessage(
+    private static string EnsureDevPrefix(string value)
+    {
+        return value.StartsWith("dev:", StringComparison.OrdinalIgnoreCase)
+            ? value
+            : $"dev:{value}";
+    }
+
+    private InboundMessage BuildInboundMessage(DevInboundRequest request, string providerMessageId)
+    {
+        var conversationValue = EnsureDevPrefix(request.Conversation);
+        var fromValue = EnsureDevPrefix(request.From);
+
+        return new InboundMessage(
             ChannelId: ChannelIds.Dev,
             ProviderMessageId: providerMessageId,
             Conversation: new ConversationId(conversationValue),
@@ -58,19 +72,26 @@ public sealed class DevInboundController : ControllerBase
             ReceivedAt: DateTimeOffset.UtcNow,
             ProviderMeta: new Dictionary<string, string> { ["source"] = "devapi" }
         );
+    }
 
-        // Parse intent and handle
+    private (ParsedIntent Intent, OrchestratorResult Result) ProcessInboundMessage(InboundMessage inbound)
+    {
         var intent = _parser.Parse(inbound.Body);
         var result = _orchestrator.HandleInbound(inbound, intent);
+        return (intent, result);
+    }
 
-        // Enqueue execution dispatch if present
+    private void EnqueueDispatchIfPresent(OrchestratorResult result)
+    {
         if (result.Dispatch != null)
         {
             _executionDispatcher.Enqueue(result.Dispatch);
         }
+    }
 
-        // Map to response DTO
-        var response = new DevInboundResponse
+    private static DevInboundResponse MapToResponse(ParsedIntent intent, OrchestratorResult result)
+    {
+        return new DevInboundResponse
         {
             IntentType = intent.Type.ToString(),
             JobKey = intent.JobKey,
@@ -85,8 +106,6 @@ public sealed class DevInboundController : ControllerBase
                 Conversation = o.Conversation.Value
             }).ToList()
         };
-
-        return Ok(response);
     }
 }
 
