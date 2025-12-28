@@ -76,7 +76,6 @@ static void ConfigureOrchestrator(IServiceCollection services)
 static string ConfigureExecutionQueue(IServiceCollection services, IConfiguration configuration)
 {
     services.AddScoped<IExecutionQueue, DatabaseExecutionQueue>();
-    services.AddScoped<IExecutionDispatcher>(sp => sp.GetRequiredService<IExecutionQueue>());
     return "Database";
 }
 
@@ -87,6 +86,12 @@ static async Task ConfigureApplication(WebApplication app, string databaseConnec
     
     await app.Services.EnsureDatabaseCreatedAsync();
     
-    app.UseHttpsRedirection();
+    // Only enable HTTPS redirection in non-development environments or when HTTPS is explicitly configured
+    var environment = app.Environment;
+    if (!environment.IsDevelopment() || app.Configuration["ASPNETCORE_HTTPS_PORT"] != null)
+    {
+        app.UseHttpsRedirection();
+    }
+    
     app.MapControllers();
 }

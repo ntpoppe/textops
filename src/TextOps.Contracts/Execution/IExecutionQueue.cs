@@ -3,8 +3,13 @@ namespace TextOps.Contracts.Execution;
 /// <summary>
 /// Unified execution queue interface. Implementations can be in-memory or database-backed.
 /// </summary>
-public interface IExecutionQueue : IExecutionDispatcher
+public interface IExecutionQueue
 {
+    /// <summary>
+    /// Enqueues an execution dispatch request.
+    /// </summary>
+    Task EnqueueAsync(ExecutionDispatch dispatch, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Claims the next pending dispatch for processing. Returns null if none available.
     /// For database queues, this uses FOR UPDATE SKIP LOCKED for safe concurrent access.

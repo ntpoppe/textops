@@ -14,16 +14,16 @@ public sealed class DevInboundController : ControllerBase
 {
     private readonly IIntentParser _parser;
     private readonly IRunOrchestrator _orchestrator;
-    private readonly IExecutionDispatcher _executionDispatcher;
+    private readonly IExecutionQueue _executionQueue;
 
     public DevInboundController(
         IIntentParser parser,
         IRunOrchestrator orchestrator,
-        IExecutionDispatcher executionDispatcher)
+        IExecutionQueue executionQueue)
     {
         _parser = parser;
         _orchestrator = orchestrator;
-        _executionDispatcher = executionDispatcher;
+        _executionQueue = executionQueue;
     }
 
     [HttpPost("inbound")]
@@ -85,7 +85,7 @@ public sealed class DevInboundController : ControllerBase
     {
         if (orchestratorResult.Dispatch != null)
         {
-            await _executionDispatcher.EnqueueAsync(orchestratorResult.Dispatch);
+            await _executionQueue.EnqueueAsync(orchestratorResult.Dispatch);
         }
     }
 
