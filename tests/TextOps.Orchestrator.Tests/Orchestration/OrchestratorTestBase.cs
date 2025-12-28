@@ -25,7 +25,7 @@ public abstract class OrchestratorTestBase
             .Options;
 
         Db = new TextOpsDbContext(options);
-        var repository = new EfRunRepository(Db);
+        var repository = new EntityFrameworkRunRepository(Db);
         Orchestrator = new PersistentRunOrchestrator(repository);
         Parser = new DeterministicIntentParser();
     }

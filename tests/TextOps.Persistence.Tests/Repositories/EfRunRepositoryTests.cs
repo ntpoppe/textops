@@ -9,7 +9,7 @@ namespace TextOps.Persistence.Tests.Repositories;
 public class EfRunRepositoryTests
 {
     private TextOpsDbContext _db = null!;
-    private EfRunRepository _repo = null!;
+    private EntityFrameworkRunRepository _repo = null!;
 
     [SetUp]
     public void SetUp()
@@ -19,7 +19,7 @@ public class EfRunRepositoryTests
             .Options;
 
         _db = new TextOpsDbContext(options);
-        _repo = new EfRunRepository(_db);
+        _repo = new EntityFrameworkRunRepository(_db);
     }
 
     [TearDown]

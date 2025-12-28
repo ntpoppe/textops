@@ -11,12 +11,12 @@ using TextOps.Worker.Stub;
 var builder = Host.CreateApplicationBuilder(args);
 
 ConfigureWorkerOptions(builder.Services, builder.Configuration);
-var dbConnStr = ConfigurePersistence(builder.Services, builder.Configuration);
+var databaseConnectionString = ConfigurePersistence(builder.Services, builder.Configuration);
 ConfigureServices(builder.Services);
 
 var host = builder.Build();
 
-await ConfigureApplication(host, dbConnStr);
+await ConfigureApplication(host, databaseConnectionString);
 
 host.Run();
 
@@ -32,16 +32,16 @@ static string ConfigurePersistence(IServiceCollection services, IConfiguration c
     
     if (persistenceProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     {
-        var dbConnStr = connectionStrings.GetValue<string>("Postgres")
+        var databaseConnectionString = connectionStrings.GetValue<string>("Postgres")
             ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
-        services.AddTextOpsPostgres(dbConnStr);
-        return dbConnStr;
+        services.AddTextOpsPostgres(databaseConnectionString);
+        return databaseConnectionString;
     }
     else
     {
-        var dbConnStr = connectionStrings.GetValue<string>("Sqlite") ?? "Data Source=textops.db";
-        services.AddTextOpsSqlite(dbConnStr);
-        return dbConnStr;
+        var databaseConnectionString = connectionStrings.GetValue<string>("Sqlite") ?? "Data Source=textops.db";
+        services.AddTextOpsSqlite(databaseConnectionString);
+        return databaseConnectionString;
     }
 }
 
@@ -53,10 +53,10 @@ static void ConfigureServices(IServiceCollection services)
     services.AddHostedService<WorkerHostedService>();
 }
 
-static async Task ConfigureApplication(IHost host, string dbConnStr)
+static async Task ConfigureApplication(IHost host, string databaseConnectionString)
 {
     var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Worker");
-    logger.LogInformation("Worker starting with Database={Database}", dbConnStr);
+    logger.LogInformation("Worker starting with Database={Database}", databaseConnectionString);
     
     await host.Services.EnsureDatabaseCreatedAsync();
 }

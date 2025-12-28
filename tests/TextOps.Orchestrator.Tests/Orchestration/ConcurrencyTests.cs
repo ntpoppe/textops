@@ -53,7 +53,7 @@ public sealed class ConcurrencyTests
     private IRunOrchestrator CreateOrchestrator()
     {
         var db = new TextOpsDbContext(_dbOptions);
-        var repository = new EfRunRepository(db);
+        var repository = new EntityFrameworkRunRepository(db);
         return new PersistentRunOrchestrator(repository);
     }
 

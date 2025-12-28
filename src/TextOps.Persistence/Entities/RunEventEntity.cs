@@ -26,13 +26,13 @@ public sealed class RunEventEntity
         Payload: JsonSerializer.Deserialize<object>(PayloadJson) ?? new { }
     );
 
-    public static RunEventEntity FromRunEvent(RunEvent evt) => new()
+    public static RunEventEntity FromRunEvent(RunEvent runEvent) => new()
     {
-        RunId = evt.RunId,
-        Type = evt.Type,
-        At = evt.At,
-        Actor = evt.Actor,
-        PayloadJson = JsonSerializer.Serialize(evt.Payload)
+        RunId = runEvent.RunId,
+        Type = runEvent.Type,
+        At = runEvent.At,
+        Actor = runEvent.Actor,
+        PayloadJson = JsonSerializer.Serialize(runEvent.Payload)
     };
 }
 

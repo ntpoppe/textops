@@ -16,24 +16,24 @@ public sealed class StubWorkerExecutor : IWorkerExecutor
         _orchestrator = orchestrator;
     }
 
-    public async Task<OrchestratorResult> ExecuteAsync(ExecutionDispatch dispatch, CancellationToken cancellationToken)
+    public async Task<OrchestratorResult> ExecuteAsync(ExecutionDispatch executionDispatch, CancellationToken cancellationToken)
     {
-        _orchestrator.OnExecutionStarted(dispatch.RunId, WorkerId);
+        _orchestrator.OnExecutionStarted(executionDispatch.RunId, WorkerId);
 
         await SimulateWork(cancellationToken);
 
-        var success = DetermineSuccess(dispatch.JobKey);
-        var summary = CreateSummary(dispatch.JobKey, success);
+        var success = DetermineSuccess(executionDispatch.JobKey);
+        var executionSummary = CreateSummary(executionDispatch.JobKey, success);
 
-        var result = _orchestrator.OnExecutionCompleted(dispatch.RunId, WorkerId, success, summary);
+        var orchestratorResult = _orchestrator.OnExecutionCompleted(executionDispatch.RunId, WorkerId, success, executionSummary);
 
-        return result;
+        return orchestratorResult;
     }
 
     private static async Task SimulateWork(CancellationToken cancellationToken)
     {
-        var delay = Random.Shared.Next(1000, 2001);
-        await Task.Delay(delay, cancellationToken);
+        var workDelay = Random.Shared.Next(1000, 2001);
+        await Task.Delay(workDelay, cancellationToken);
     }
 
     private static bool DetermineSuccess(string jobKey)

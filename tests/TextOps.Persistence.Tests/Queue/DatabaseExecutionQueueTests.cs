@@ -112,7 +112,7 @@ public sealed class DatabaseExecutionQueueTests
         _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
-        await _queue.CompleteAsync(claimed!.QueueId, success: true, error: null);
+        await _queue.CompleteAsync(claimed!.QueueId, success: true, errorMessage: null);
         
         var entry = await _db.ExecutionQueue.FirstAsync();
         Assert.That(entry.Status, Is.EqualTo("completed"));
@@ -127,7 +127,7 @@ public sealed class DatabaseExecutionQueueTests
         _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
-        await _queue.CompleteAsync(claimed!.QueueId, success: false, error: "Something went wrong");
+        await _queue.CompleteAsync(claimed!.QueueId, success: false, errorMessage: "Something went wrong");
         
         var entry = await _db.ExecutionQueue.FirstAsync();
         Assert.That(entry.Status, Is.EqualTo("failed"));
@@ -140,7 +140,7 @@ public sealed class DatabaseExecutionQueueTests
         _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
-        await _queue.ReleaseAsync(claimed!.QueueId, error: "Retrying");
+        await _queue.ReleaseAsync(claimed!.QueueId, errorMessage: "Retrying");
         
         var entry = await _db.ExecutionQueue.FirstAsync();
         Assert.That(entry.Status, Is.EqualTo("pending"));

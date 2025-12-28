@@ -37,10 +37,10 @@ public sealed class DevInboundController : ControllerBase
         }
 
         var providerMessageId = EnsureProviderMessageId(request.ProviderMessageId);
-        var inbound = BuildInboundMessage(request, providerMessageId);
-        var (intent, result) = ProcessInboundMessage(inbound);
-        EnqueueDispatchIfPresent(result);
-        var response = MapToResponse(intent, result);
+        var inboundMessage = BuildInboundMessage(request, providerMessageId);
+        var (parsedIntent, orchestratorResult) = ProcessInboundMessage(inboundMessage);
+        EnqueueDispatchIfPresent(orchestratorResult);
+        var response = MapToResponse(parsedIntent, orchestratorResult);
 
         return Ok(response);
     }
@@ -74,36 +74,36 @@ public sealed class DevInboundController : ControllerBase
         );
     }
 
-    private (ParsedIntent Intent, OrchestratorResult Result) ProcessInboundMessage(InboundMessage inbound)
+    private (ParsedIntent Intent, OrchestratorResult Result) ProcessInboundMessage(InboundMessage inboundMessage)
     {
-        var intent = _parser.Parse(inbound.Body);
-        var result = _orchestrator.HandleInbound(inbound, intent);
-        return (intent, result);
+        var parsedIntent = _parser.Parse(inboundMessage.Body);
+        var orchestratorResult = _orchestrator.HandleInbound(inboundMessage, parsedIntent);
+        return (parsedIntent, orchestratorResult);
     }
 
-    private void EnqueueDispatchIfPresent(OrchestratorResult result)
+    private void EnqueueDispatchIfPresent(OrchestratorResult orchestratorResult)
     {
-        if (result.Dispatch != null)
+        if (orchestratorResult.Dispatch != null)
         {
-            _executionDispatcher.Enqueue(result.Dispatch);
+            _executionDispatcher.Enqueue(orchestratorResult.Dispatch);
         }
     }
 
-    private static DevInboundResponse MapToResponse(ParsedIntent intent, OrchestratorResult result)
+    private static DevInboundResponse MapToResponse(ParsedIntent parsedIntent, OrchestratorResult orchestratorResult)
     {
         return new DevInboundResponse
         {
-            IntentType = intent.Type.ToString(),
-            JobKey = intent.JobKey,
-            RunId = result.RunId,
-            DispatchedExecution = result.DispatchedExecution,
-            Outbound = result.Outbound.Select(o => new OutboundMessageDto
+            IntentType = parsedIntent.Type.ToString(),
+            JobKey = parsedIntent.JobKey,
+            RunId = orchestratorResult.RunId,
+            DispatchedExecution = orchestratorResult.DispatchedExecution,
+            Outbound = orchestratorResult.Outbound.Select(outboundMessage => new OutboundMessageDto
             {
-                Body = o.Body,
-                CorrelationId = o.CorrelationId,
-                IdempotencyKey = o.IdempotencyKey,
-                ChannelId = o.ChannelId,
-                Conversation = o.Conversation.Value
+                Body = outboundMessage.Body,
+                CorrelationId = outboundMessage.CorrelationId,
+                IdempotencyKey = outboundMessage.IdempotencyKey,
+                ChannelId = outboundMessage.ChannelId,
+                Conversation = outboundMessage.Conversation.Value
             }).ToList()
         };
     }

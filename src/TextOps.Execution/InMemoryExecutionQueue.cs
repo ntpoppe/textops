@@ -25,23 +25,23 @@ public sealed class InMemoryExecutionQueue : IExecutionQueue
         _channel = Channel.CreateBounded<QueuedDispatch>(options);
     }
 
-    public void Enqueue(ExecutionDispatch dispatch)
+    public void Enqueue(ExecutionDispatch executionDispatch)
     {
         var id = Interlocked.Increment(ref _nextId);
-        var queued = new QueuedDispatch(id, dispatch.RunId, dispatch.JobKey, Attempts: 1);
-        _channel.Writer.TryWrite(queued);
+        var queuedDispatch = new QueuedDispatch(id, executionDispatch.RunId, executionDispatch.JobKey, Attempts: 1);
+        _channel.Writer.TryWrite(queuedDispatch);
     }
 
-    public async Task<QueuedDispatch?> ClaimNextAsync(string workerId, CancellationToken ct = default)
+    public async Task<QueuedDispatch?> ClaimNextAsync(string workerId, CancellationToken cancellationToken = default)
     {
         try
         {
-            if (await _channel.Reader.WaitToReadAsync(ct))
+            if (await _channel.Reader.WaitToReadAsync(cancellationToken))
             {
-                if (_channel.Reader.TryRead(out var queued))
+                if (_channel.Reader.TryRead(out var queuedDispatch))
                 {
-                    _processing[queued.QueueId] = queued;
-                    return queued;
+                    _processing[queuedDispatch.QueueId] = queuedDispatch;
+                    return queuedDispatch;
                 }
             }
         }
@@ -52,24 +52,24 @@ public sealed class InMemoryExecutionQueue : IExecutionQueue
         return null;
     }
 
-    public Task CompleteAsync(long queueId, bool success, string? error, CancellationToken ct = default)
+    public Task CompleteAsync(long queueId, bool success, string? errorMessage, CancellationToken cancellationToken = default)
     {
         _processing.TryRemove(queueId, out _);
         return Task.CompletedTask;
     }
 
-    public Task ReleaseAsync(long queueId, string? error, CancellationToken ct = default)
+    public Task ReleaseAsync(long queueId, string? errorMessage, CancellationToken cancellationToken = default)
     {
-        if (_processing.TryRemove(queueId, out var queued))
+        if (_processing.TryRemove(queueId, out var queuedDispatch))
         {
             // Re-queue with incremented attempt count
-            var requeued = queued with { Attempts = queued.Attempts + 1 };
-            _channel.Writer.TryWrite(requeued);
+            var requeuedDispatch = queuedDispatch with { Attempts = queuedDispatch.Attempts + 1 };
+            _channel.Writer.TryWrite(requeuedDispatch);
         }
         return Task.CompletedTask;
     }
 
-    public Task<int> ReclaimStaleAsync(TimeSpan lockTimeout, CancellationToken ct = default)
+    public Task<int> ReclaimStaleAsync(TimeSpan lockTimeout, CancellationToken cancellationToken = default)
     {
         // In-memory queue doesn't have stale locks (entries are either in channel or processing dict)
         return Task.FromResult(0);

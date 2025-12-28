@@ -12,7 +12,7 @@ namespace TextOps.Persistence.Tests;
 public class PersistentOrchestratorTests
 {
     private TextOpsDbContext _db = null!;
-    private EfRunRepository _repo = null!;
+    private EntityFrameworkRunRepository _repo = null!;
     private PersistentRunOrchestrator _orchestrator = null!;
 
     [SetUp]
@@ -23,7 +23,7 @@ public class PersistentOrchestratorTests
             .Options;
 
         _db = new TextOpsDbContext(options);
-        _repo = new EfRunRepository(_db);
+        _repo = new EntityFrameworkRunRepository(_db);
         _orchestrator = new PersistentRunOrchestrator(_repo);
     }
 

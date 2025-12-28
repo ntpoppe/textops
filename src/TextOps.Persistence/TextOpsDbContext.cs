@@ -30,71 +30,71 @@ public sealed class TextOpsDbContext : DbContext
 
     private static void ConfigureRunEntity(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<RunEntity>(entity =>
+        modelBuilder.Entity<RunEntity>(runEntity =>
         {
-            entity.ToTable("Runs");
-            entity.HasKey(e => e.RunId);
-            entity.Property(e => e.RunId).HasMaxLength(50);
-            entity.Property(e => e.JobKey).HasMaxLength(200).IsRequired();
-            entity.Property(e => e.Status).IsRequired();
-            entity.Property(e => e.RequestedByAddress).HasMaxLength(500).IsRequired();
-            entity.Property(e => e.ChannelId).HasMaxLength(100).IsRequired();
-            entity.Property(e => e.ConversationId).HasMaxLength(500).IsRequired();
-            entity.Property(e => e.Version).IsConcurrencyToken();
+            runEntity.ToTable("Runs");
+            runEntity.HasKey(run => run.RunId);
+            runEntity.Property(run => run.RunId).HasMaxLength(50);
+            runEntity.Property(run => run.JobKey).HasMaxLength(200).IsRequired();
+            runEntity.Property(run => run.Status).IsRequired();
+            runEntity.Property(run => run.RequestedByAddress).HasMaxLength(500).IsRequired();
+            runEntity.Property(run => run.ChannelId).HasMaxLength(100).IsRequired();
+            runEntity.Property(run => run.ConversationId).HasMaxLength(500).IsRequired();
+            runEntity.Property(run => run.Version).IsConcurrencyToken();
 
-            entity.HasIndex(e => e.Status);
-            entity.HasIndex(e => new { e.ChannelId, e.ConversationId });
+            runEntity.HasIndex(run => run.Status);
+            runEntity.HasIndex(run => new { run.ChannelId, run.ConversationId });
         });
     }
 
     private static void ConfigureRunEventEntity(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<RunEventEntity>(entity =>
+        modelBuilder.Entity<RunEventEntity>(runEventEntity =>
         {
-            entity.ToTable("RunEvents");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).ValueGeneratedOnAdd();
-            entity.Property(e => e.RunId).HasMaxLength(50).IsRequired();
-            entity.Property(e => e.Type).HasMaxLength(100).IsRequired();
-            entity.Property(e => e.Actor).HasMaxLength(500).IsRequired();
-            entity.Property(e => e.PayloadJson).IsRequired();
+            runEventEntity.ToTable("RunEvents");
+            runEventEntity.HasKey(runEvent => runEvent.Id);
+            runEventEntity.Property(runEvent => runEvent.Id).ValueGeneratedOnAdd();
+            runEventEntity.Property(runEvent => runEvent.RunId).HasMaxLength(50).IsRequired();
+            runEventEntity.Property(runEvent => runEvent.Type).HasMaxLength(100).IsRequired();
+            runEventEntity.Property(runEvent => runEvent.Actor).HasMaxLength(500).IsRequired();
+            runEventEntity.Property(runEvent => runEvent.PayloadJson).IsRequired();
 
-            entity.HasIndex(e => e.RunId);
+            runEventEntity.HasIndex(runEvent => runEvent.RunId);
 
-            entity.HasOne(e => e.Run)
-                .WithMany(r => r.Events)
-                .HasForeignKey(e => e.RunId)
+            runEventEntity.HasOne(runEvent => runEvent.Run)
+                .WithMany(run => run.Events)
+                .HasForeignKey(runEvent => runEvent.RunId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }
 
     private static void ConfigureInboxEntryEntity(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<InboxEntryEntity>(entity =>
+        modelBuilder.Entity<InboxEntryEntity>(inboxEntryEntity =>
         {
-            entity.ToTable("InboxDedup");
-            entity.HasKey(e => new { e.ChannelId, e.ProviderMessageId });
-            entity.Property(e => e.ChannelId).HasMaxLength(100);
-            entity.Property(e => e.ProviderMessageId).HasMaxLength(500);
-            entity.Property(e => e.RunId).HasMaxLength(50);
+            inboxEntryEntity.ToTable("InboxDedup");
+            inboxEntryEntity.HasKey(inboxEntry => new { inboxEntry.ChannelId, inboxEntry.ProviderMessageId });
+            inboxEntryEntity.Property(inboxEntry => inboxEntry.ChannelId).HasMaxLength(100);
+            inboxEntryEntity.Property(inboxEntry => inboxEntry.ProviderMessageId).HasMaxLength(500);
+            inboxEntryEntity.Property(inboxEntry => inboxEntry.RunId).HasMaxLength(50);
         });
     }
 
     private static void ConfigureExecutionQueueEntity(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<ExecutionQueueEntity>(entity =>
+        modelBuilder.Entity<ExecutionQueueEntity>(queueEntity =>
         {
-            entity.ToTable("ExecutionQueue");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).ValueGeneratedOnAdd();
-            entity.Property(e => e.RunId).HasMaxLength(50).IsRequired();
-            entity.Property(e => e.JobKey).HasMaxLength(200).IsRequired();
-            entity.Property(e => e.Status).HasMaxLength(20).IsRequired();
-            entity.Property(e => e.LockedBy).HasMaxLength(100);
-            entity.Property(e => e.LastError).HasMaxLength(2000);
+            queueEntity.ToTable("ExecutionQueue");
+            queueEntity.HasKey(queueEntry => queueEntry.Id);
+            queueEntity.Property(queueEntry => queueEntry.Id).ValueGeneratedOnAdd();
+            queueEntity.Property(queueEntry => queueEntry.RunId).HasMaxLength(50).IsRequired();
+            queueEntity.Property(queueEntry => queueEntry.JobKey).HasMaxLength(200).IsRequired();
+            queueEntity.Property(queueEntry => queueEntry.Status).HasMaxLength(20).IsRequired();
+            queueEntity.Property(queueEntry => queueEntry.LockedBy).HasMaxLength(100);
+            queueEntity.Property(queueEntry => queueEntry.LastError).HasMaxLength(2000);
 
-            entity.HasIndex(e => e.Status);
-            entity.HasIndex(e => new { e.Status, e.LockedAt });
+            queueEntity.HasIndex(queueEntry => queueEntry.Status);
+            queueEntity.HasIndex(queueEntry => new { queueEntry.Status, queueEntry.LockedAt });
         });
     }
 }

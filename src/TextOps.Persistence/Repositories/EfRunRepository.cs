@@ -8,24 +8,24 @@ namespace TextOps.Persistence.Repositories;
 /// <summary>
 /// EF Core implementation of <see cref="IRunRepository"/>.
 /// </summary>
-public sealed class EfRunRepository : IRunRepository
+public sealed class EntityFrameworkRunRepository : IRunRepository
 {
-    private readonly TextOpsDbContext _db;
+    private readonly TextOpsDbContext _dbContext;
 
-    public EfRunRepository(TextOpsDbContext db)
+    public EntityFrameworkRunRepository(TextOpsDbContext dbContext)
     {
-        _db = db;
+        _dbContext = dbContext;
     }
 
-    public async Task<bool> IsInboxProcessedAsync(string channelId, string providerMessageId, CancellationToken ct = default)
+    public async Task<bool> IsInboxProcessedAsync(string channelId, string providerMessageId, CancellationToken cancellationToken = default)
     {
-        return await _db.InboxEntries
-            .AnyAsync(e => e.ChannelId == channelId && e.ProviderMessageId == providerMessageId, ct);
+        return await _dbContext.InboxEntries
+            .AnyAsync(inboxEntry => inboxEntry.ChannelId == channelId && inboxEntry.ProviderMessageId == providerMessageId, cancellationToken);
     }
 
-    public async Task MarkInboxProcessedAsync(string channelId, string providerMessageId, string? runId, CancellationToken ct = default)
+    public async Task MarkInboxProcessedAsync(string channelId, string providerMessageId, string? runId, CancellationToken cancellationToken = default)
     {
-        var entry = new InboxEntryEntity
+        var inboxEntry = new InboxEntryEntity
         {
             ChannelId = channelId,
             ProviderMessageId = providerMessageId,
@@ -33,43 +33,43 @@ public sealed class EfRunRepository : IRunRepository
             RunId = runId
         };
 
-        _db.InboxEntries.Add(entry);
-        await _db.SaveChangesAsync(ct);
+        _dbContext.InboxEntries.Add(inboxEntry);
+        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task CreateRunAsync(Run run, IEnumerable<RunEvent> events, CancellationToken ct = default)
+    public async Task CreateRunAsync(Run run, IEnumerable<RunEvent> events, CancellationToken cancellationToken = default)
     {
-        var entity = RunEntity.FromRun(run);
-        var eventEntities = events.Select(RunEventEntity.FromRunEvent).ToList();
+        var runEntity = RunEntity.FromRun(run);
+        var runEventEntities = events.Select(RunEventEntity.FromRunEvent).ToList();
 
-        _db.Runs.Add(entity);
-        _db.RunEvents.AddRange(eventEntities);
+        _dbContext.Runs.Add(runEntity);
+        _dbContext.RunEvents.AddRange(runEventEntities);
 
-        await _db.SaveChangesAsync(ct);
+        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<Run?> TryUpdateRunAsync(
         string runId,
         RunStatus expectedStatus,
-        RunStatus newStatus,
+        RunStatus targetStatus,
         IEnumerable<RunEvent> events,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
     {
-        var entity = await _db.Runs.FindAsync(new object[] { runId }, ct);
-        if (entity == null || entity.Status != expectedStatus)
+        var runEntity = await _dbContext.Runs.FindAsync(new object[] { runId }, cancellationToken);
+        if (runEntity == null || runEntity.Status != expectedStatus)
             return null;
 
-        entity.Status = newStatus;
-        entity.UpdatedAt = DateTimeOffset.UtcNow;
-        entity.Version++;
+        runEntity.Status = targetStatus;
+        runEntity.UpdatedAt = DateTimeOffset.UtcNow;
+        runEntity.Version++;
 
-        var eventEntities = events.Select(RunEventEntity.FromRunEvent).ToList();
-        _db.RunEvents.AddRange(eventEntities);
+        var runEventEntities = events.Select(RunEventEntity.FromRunEvent).ToList();
+        _dbContext.RunEvents.AddRange(runEventEntities);
 
         try
         {
-            await _db.SaveChangesAsync(ct);
-            return entity.ToRun();
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return runEntity.ToRun();
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -81,25 +81,25 @@ public sealed class EfRunRepository : IRunRepository
     public async Task<Run?> TryUpdateRunFromMultipleAsync(
         string runId,
         RunStatus[] expectedStatuses,
-        RunStatus newStatus,
+        RunStatus targetStatus,
         IEnumerable<RunEvent> events,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
     {
-        var entity = await _db.Runs.FindAsync(new object[] { runId }, ct);
-        if (entity == null || !expectedStatuses.Contains(entity.Status))
+        var runEntity = await _dbContext.Runs.FindAsync(new object[] { runId }, cancellationToken);
+        if (runEntity == null || !expectedStatuses.Contains(runEntity.Status))
             return null;
 
-        entity.Status = newStatus;
-        entity.UpdatedAt = DateTimeOffset.UtcNow;
-        entity.Version++;
+        runEntity.Status = targetStatus;
+        runEntity.UpdatedAt = DateTimeOffset.UtcNow;
+        runEntity.Version++;
 
-        var eventEntities = events.Select(RunEventEntity.FromRunEvent).ToList();
-        _db.RunEvents.AddRange(eventEntities);
+        var runEventEntities = events.Select(RunEventEntity.FromRunEvent).ToList();
+        _dbContext.RunEvents.AddRange(runEventEntities);
 
         try
         {
-            await _db.SaveChangesAsync(ct);
-            return entity.ToRun();
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return runEntity.ToRun();
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -107,41 +107,41 @@ public sealed class EfRunRepository : IRunRepository
         }
     }
 
-    public async Task<Run?> GetRunAsync(string runId, CancellationToken ct = default)
+    public async Task<Run?> GetRunAsync(string runId, CancellationToken cancellationToken = default)
     {
-        var entity = await _db.Runs.FindAsync(new object[] { runId }, ct);
-        return entity?.ToRun();
+        var runEntity = await _dbContext.Runs.FindAsync(new object[] { runId }, cancellationToken);
+        return runEntity?.ToRun();
     }
 
-    public async Task<RunTimeline?> GetTimelineAsync(string runId, CancellationToken ct = default)
+    public async Task<RunTimeline?> GetTimelineAsync(string runId, CancellationToken cancellationToken = default)
     {
-        var entity = await _db.Runs
-            .Include(r => r.Events)
-            .FirstOrDefaultAsync(r => r.RunId == runId, ct);
+        var runEntity = await _dbContext.Runs
+            .Include(run => run.Events)
+            .FirstOrDefaultAsync(run => run.RunId == runId, cancellationToken);
 
-        if (entity == null)
+        if (runEntity == null)
             return null;
 
-        var run = entity.ToRun();
+        var run = runEntity.ToRun();
         // Order events in memory (SQLite doesn't support DateTimeOffset in ORDER BY)
-        var events = entity.Events
-            .OrderBy(e => e.At)
-            .ThenBy(e => e.Id)
-            .Select(e => e.ToRunEvent())
+        var runEvents = runEntity.Events
+            .OrderBy(runEvent => runEvent.At)
+            .ThenBy(runEvent => runEvent.Id)
+            .Select(runEvent => runEvent.ToRunEvent())
             .ToList();
 
-        return new RunTimeline(run, events);
+        return new RunTimeline(run, runEvents);
     }
 
-    public async Task<RunStatus?> GetRunStatusAsync(string runId, CancellationToken ct = default)
+    public async Task<RunStatus?> GetRunStatusAsync(string runId, CancellationToken cancellationToken = default)
     {
-        var entity = await _db.Runs
+        var statusProjection = await _dbContext.Runs
             .AsNoTracking()
-            .Where(r => r.RunId == runId)
-            .Select(r => new { r.Status })
-            .FirstOrDefaultAsync(ct);
+            .Where(run => run.RunId == runId)
+            .Select(run => new { run.Status })
+            .FirstOrDefaultAsync(cancellationToken);
 
-        return entity?.Status;
+        return statusProjection?.Status;
     }
 }
 

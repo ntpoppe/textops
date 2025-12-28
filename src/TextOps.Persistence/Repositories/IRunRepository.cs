@@ -12,17 +12,17 @@ public interface IRunRepository
     /// Attempts to mark an inbound message as processed (idempotency guard).
     /// Returns true if already processed (duplicate), false if newly processed.
     /// </summary>
-    Task<bool> IsInboxProcessedAsync(string channelId, string providerMessageId, CancellationToken ct = default);
+    Task<bool> IsInboxProcessedAsync(string channelId, string providerMessageId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Marks an inbound message as processed and optionally associates it with a run.
     /// </summary>
-    Task MarkInboxProcessedAsync(string channelId, string providerMessageId, string? runId, CancellationToken ct = default);
+    Task MarkInboxProcessedAsync(string channelId, string providerMessageId, string? runId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Creates a run with its initial events atomically.
     /// </summary>
-    Task CreateRunAsync(Run run, IEnumerable<RunEvent> events, CancellationToken ct = default);
+    Task CreateRunAsync(Run run, IEnumerable<RunEvent> events, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Attempts to update a run's status atomically with optimistic concurrency.
@@ -31,9 +31,9 @@ public interface IRunRepository
     Task<Run?> TryUpdateRunAsync(
         string runId,
         RunStatus expectedStatus,
-        RunStatus newStatus,
+        RunStatus targetStatus,
         IEnumerable<RunEvent> events,
-        CancellationToken ct = default);
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Attempts to update a run's status from any of the expected statuses.
@@ -42,23 +42,23 @@ public interface IRunRepository
     Task<Run?> TryUpdateRunFromMultipleAsync(
         string runId,
         RunStatus[] expectedStatuses,
-        RunStatus newStatus,
+        RunStatus targetStatus,
         IEnumerable<RunEvent> events,
-        CancellationToken ct = default);
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets a run by ID.
     /// </summary>
-    Task<Run?> GetRunAsync(string runId, CancellationToken ct = default);
+    Task<Run?> GetRunAsync(string runId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets a run's complete timeline (run + events).
     /// </summary>
-    Task<RunTimeline?> GetTimelineAsync(string runId, CancellationToken ct = default);
+    Task<RunTimeline?> GetTimelineAsync(string runId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the current status of a run (for concurrency checks).
     /// </summary>
-    Task<RunStatus?> GetRunStatusAsync(string runId, CancellationToken ct = default);
+    Task<RunStatus?> GetRunStatusAsync(string runId, CancellationToken cancellationToken = default);
 }
 

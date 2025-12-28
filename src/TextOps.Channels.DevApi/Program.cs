@@ -15,13 +15,13 @@ using TextOps.Worker.Stub;
 var builder = WebApplication.CreateBuilder(args);
 
 ConfigureControllers(builder.Services);
-var dbConnStr = ConfigurePersistence(builder.Services, builder.Configuration);
+var databaseConnectionString = ConfigurePersistence(builder.Services, builder.Configuration);
 ConfigureOrchestrator(builder.Services);
 var queueProvider = ConfigureExecutionQueue(builder.Services, builder.Configuration);
 
 var app = builder.Build();
 
-await ConfigureApplication(app, dbConnStr, queueProvider);
+await ConfigureApplication(app, databaseConnectionString, queueProvider);
 
 app.Run();
 
@@ -37,8 +37,8 @@ static void ConfigureControllers(IServiceCollection services)
                     Title = "Validation Error",
                     Status = StatusCodes.Status400BadRequest,
                     Detail = string.Join(" ", context.ModelState
-                        .SelectMany(x => x.Value?.Errors ?? Enumerable.Empty<Microsoft.AspNetCore.Mvc.ModelBinding.ModelError>())
-                        .Select(x => x.ErrorMessage))
+                        .SelectMany(modelStateEntry => modelStateEntry.Value?.Errors ?? Enumerable.Empty<Microsoft.AspNetCore.Mvc.ModelBinding.ModelError>())
+                        .Select(modelError => modelError.ErrorMessage))
                 };
                 return new BadRequestObjectResult(problemDetails);
             };
@@ -57,16 +57,16 @@ static string ConfigurePersistence(IServiceCollection services, IConfiguration c
     
     if (persistenceProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     {
-        var dbConnStr = connectionStrings.GetValue<string>("Postgres")
+        var databaseConnectionString = connectionStrings.GetValue<string>("Postgres")
             ?? throw new InvalidOperationException("PostgreSQL connection string not configured");
-        services.AddTextOpsPostgres(dbConnStr);
-        return dbConnStr;
+        services.AddTextOpsPostgres(databaseConnectionString);
+        return databaseConnectionString;
     }
     else
     {
-        var dbConnStr = connectionStrings.GetValue<string>("Sqlite") ?? "Data Source=textops.db";
-        services.AddTextOpsSqlite(dbConnStr);
-        return dbConnStr;
+        var databaseConnectionString = connectionStrings.GetValue<string>("Sqlite") ?? "Data Source=textops.db";
+        services.AddTextOpsSqlite(databaseConnectionString);
+        return databaseConnectionString;
     }
 }
 
@@ -91,9 +91,9 @@ static string ConfigureExecutionQueue(IServiceCollection services, IConfiguratio
         services.AddSingleton<IExecutionQueue>(sp => sp.GetRequiredService<InMemoryExecutionQueue>());
         services.AddSingleton<IExecutionDispatcher>(sp => sp.GetRequiredService<InMemoryExecutionQueue>());
         
-        services.AddScoped<IWorkerExecutor>(sp =>
+        services.AddScoped<IWorkerExecutor>(serviceProvider =>
         {
-            var orchestrator = sp.GetRequiredService<IRunOrchestrator>();
+            var orchestrator = serviceProvider.GetRequiredService<IRunOrchestrator>();
             return new StubWorkerExecutor(orchestrator);
         });
         
@@ -103,10 +103,10 @@ static string ConfigureExecutionQueue(IServiceCollection services, IConfiguratio
     return queueProvider;
 }
 
-static async Task ConfigureApplication(WebApplication app, string dbConnStr, string queueProvider)
+static async Task ConfigureApplication(WebApplication app, string databaseConnectionString, string queueProvider)
 {
     var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DevApi");
-    logger.LogInformation("DevApi starting with Database={Database}, Queue={Queue}", dbConnStr, queueProvider);
+    logger.LogInformation("DevApi starting with Database={Database}, Queue={Queue}", databaseConnectionString, queueProvider);
     
     await app.Services.EnsureDatabaseCreatedAsync();
     

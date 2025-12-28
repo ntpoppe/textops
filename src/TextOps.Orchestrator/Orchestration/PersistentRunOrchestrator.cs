@@ -28,10 +28,10 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         _repository = repository;
     }
 
-    public OrchestratorResult HandleInbound(InboundMessage msg, ParsedIntent intent)
+    public OrchestratorResult HandleInbound(InboundMessage inboundMessage, ParsedIntent intent)
     {
         // Use synchronous wrapper for the interface (async operations internally)
-        return HandleInboundAsync(msg, intent).GetAwaiter().GetResult();
+        return HandleInboundAsync(inboundMessage, intent).GetAwaiter().GetResult();
     }
 
     public RunTimeline GetTimeline(string runId)
@@ -56,19 +56,19 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
     // Async Implementation
     // ------------------------
 
-    private async Task<OrchestratorResult> HandleInboundAsync(InboundMessage msg, ParsedIntent intent)
+    private async Task<OrchestratorResult> HandleInboundAsync(InboundMessage inboundMessage, ParsedIntent intent)
     {
-        if (await IsInboundDuplicate(msg))
+        if (await IsInboundDuplicate(inboundMessage))
         {
             return CreateDuplicateInboundResult();
         }
 
-        return await RouteByIntent(msg, intent);
+        return await RouteByIntent(inboundMessage, intent);
     }
 
-    private async Task<bool> IsInboundDuplicate(InboundMessage msg)
+    private async Task<bool> IsInboundDuplicate(InboundMessage inboundMessage)
     {
-        return await _repository.IsInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId);
+        return await _repository.IsInboxProcessedAsync(inboundMessage.ChannelId, inboundMessage.ProviderMessageId);
     }
 
     private static OrchestratorResult CreateDuplicateInboundResult()
@@ -81,65 +81,65 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         );
     }
 
-    private async Task<OrchestratorResult> RouteByIntent(InboundMessage msg, ParsedIntent intent)
+    private async Task<OrchestratorResult> RouteByIntent(InboundMessage inboundMessage, ParsedIntent intent)
     {
         return intent.Type switch
         {
-            IntentType.RunJob => await HandleRunJobAsync(msg, intent),
-            IntentType.ApproveRun => await HandleApproveAsync(msg, intent),
-            IntentType.DenyRun => await HandleDenyAsync(msg, intent),
-            IntentType.Status => await HandleStatusAsync(msg, intent),
-            _ => await HandleUnknownAsync(msg)
+            IntentType.RunJob => await HandleRunJobAsync(inboundMessage, intent),
+            IntentType.ApproveRun => await HandleApproveAsync(inboundMessage, intent),
+            IntentType.DenyRun => await HandleDenyAsync(inboundMessage, intent),
+            IntentType.Status => await HandleStatusAsync(inboundMessage, intent),
+            _ => await HandleUnknownAsync(inboundMessage)
         };
     }
 
-    private async Task<OrchestratorResult> HandleRunJobAsync(InboundMessage msg, ParsedIntent intent)
+    private async Task<OrchestratorResult> HandleRunJobAsync(InboundMessage inboundMessage, ParsedIntent intent)
     {
         if (string.IsNullOrWhiteSpace(intent.JobKey))
         {
-            await _repository.MarkInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId, null);
-            return Reply(msg, runId: null, "Missing job key. Usage: run <jobKey>");
+            await _repository.MarkInboxProcessedAsync(inboundMessage.ChannelId, inboundMessage.ProviderMessageId, null);
+            return CreateReplyMessage(inboundMessage, runId: null, "Missing job key. Usage: run <jobKey>");
         }
 
-        var now = DateTimeOffset.UtcNow;
-        var runId = NewRunId();
-        var run = CreateRun(runId, intent.JobKey!, msg, now);
-        var events = CreateRunCreationEvents(runId, msg, now, run.JobKey);
+        var createdAt = DateTimeOffset.UtcNow;
+        var runId = GenerateRunId();
+        var run = CreateRun(runId, intent.JobKey!, inboundMessage, createdAt);
+        var runEvents = CreateRunCreationEvents(runId, inboundMessage, createdAt, run.JobKey);
 
-        await _repository.CreateRunAsync(run, events);
-        await _repository.MarkInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId, runId);
+        await _repository.CreateRunAsync(run, runEvents);
+        await _repository.MarkInboxProcessedAsync(inboundMessage.ChannelId, inboundMessage.ProviderMessageId, runId);
 
-        var outbound = CreateApprovalRequestMessage(msg, runId, run.JobKey);
-        return new OrchestratorResult(runId, new[] { outbound }, DispatchedExecution: false, Dispatch: null);
+        var outboundMessage = CreateApprovalRequestMessage(inboundMessage, runId, run.JobKey);
+        return new OrchestratorResult(runId, new[] { outboundMessage }, DispatchedExecution: false, Dispatch: null);
     }
 
-    private static Run CreateRun(string runId, string jobKey, InboundMessage msg, DateTimeOffset now)
+    private static Run CreateRun(string runId, string jobKey, InboundMessage inboundMessage, DateTimeOffset createdAt)
     {
         return new Run(
             RunId: runId,
             JobKey: jobKey,
             Status: RunStatus.AwaitingApproval,
-            CreatedAt: now,
-            RequestedByAddress: msg.From.Value,
-            ChannelId: msg.ChannelId,
-            ConversationId: msg.Conversation.Value
+            CreatedAt: createdAt,
+            RequestedByAddress: inboundMessage.From.Value,
+            ChannelId: inboundMessage.ChannelId,
+            ConversationId: inboundMessage.Conversation.Value
         );
     }
 
-    private static RunEvent[] CreateRunCreationEvents(string runId, InboundMessage msg, DateTimeOffset now, string jobKey)
+    private static RunEvent[] CreateRunCreationEvents(string runId, InboundMessage inboundMessage, DateTimeOffset createdAt, string jobKey)
     {
         return new[]
         {
-            new RunEvent(runId, "RunCreated", now, ActorFrom(msg), new { JobKey = jobKey }),
-            new RunEvent(runId, "ApprovalRequested", now, "system", new { Policy = "DefaultRequireApproval" })
+            new RunEvent(runId, "RunCreated", createdAt, GetActorFromMessage(inboundMessage), new { JobKey = jobKey }),
+            new RunEvent(runId, "ApprovalRequested", createdAt, "system", new { Policy = "DefaultRequireApproval" })
         };
     }
 
-    private static OutboundMessage CreateApprovalRequestMessage(InboundMessage msg, string runId, string jobKey)
+    private static OutboundMessage CreateApprovalRequestMessage(InboundMessage inboundMessage, string runId, string jobKey)
     {
         return new OutboundMessage(
-            ChannelId: msg.ChannelId,
-            Conversation: msg.Conversation,
+            ChannelId: inboundMessage.ChannelId,
+            Conversation: inboundMessage.Conversation,
             To: null,
             Body: $"Job \"{jobKey}\" is ready. Reply YES {runId} to approve or NO {runId} to deny.",
             CorrelationId: runId,
@@ -147,41 +147,41 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         );
     }
 
-    private async Task<OrchestratorResult> HandleApproveAsync(InboundMessage msg, ParsedIntent intent)
+    private async Task<OrchestratorResult> HandleApproveAsync(InboundMessage inboundMessage, ParsedIntent intent)
     {
-        await _repository.MarkInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId, null);
+        await _repository.MarkInboxProcessedAsync(inboundMessage.ChannelId, inboundMessage.ProviderMessageId, null);
 
         if (string.IsNullOrWhiteSpace(intent.RunId))
-            return Reply(msg, runId: null, "Missing run id. Usage: yes <runId>");
+            return CreateReplyMessage(inboundMessage, runId: null, "Missing run id. Usage: yes <runId>");
 
         var runId = intent.RunId!.Trim();
         var run = await _repository.GetRunAsync(runId);
 
         if (run == null)
-            return Reply(msg, runId: null, $"Unknown run id: {runId}");
+            return CreateReplyMessage(inboundMessage, runId: null, $"Unknown run id: {runId}");
 
-        var now = DateTimeOffset.UtcNow;
-        var events = CreateApprovalEvents(runId, msg, now);
+        var createdAt = DateTimeOffset.UtcNow;
+        var approvalEvents = CreateApprovalEvents(runId, inboundMessage, createdAt);
 
-        var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.AwaitingApproval, RunStatus.Dispatching, events);
+        var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.AwaitingApproval, RunStatus.Dispatching, approvalEvents);
 
         if (updatedRun == null)
         {
             var currentStatus = await _repository.GetRunStatusAsync(runId);
-            return Reply(msg, runId: run.RunId, $"Cannot approve run {run.RunId} in state {currentStatus}.");
+            return CreateReplyMessage(inboundMessage, runId: run.RunId, $"Cannot approve run {run.RunId} in state {currentStatus}.");
         }
 
-        var outbound = CreateApprovalMessage(updatedRun);
-        var dispatch = new ExecutionDispatch(updatedRun.RunId, updatedRun.JobKey);
-        return new OrchestratorResult(updatedRun.RunId, new[] { outbound }, DispatchedExecution: true, Dispatch: dispatch);
+        var outboundMessage = CreateApprovalMessage(updatedRun);
+        var executionDispatch = new ExecutionDispatch(updatedRun.RunId, updatedRun.JobKey);
+        return new OrchestratorResult(updatedRun.RunId, new[] { outboundMessage }, DispatchedExecution: true, Dispatch: executionDispatch);
     }
 
-    private static RunEvent[] CreateApprovalEvents(string runId, InboundMessage msg, DateTimeOffset now)
+    private static RunEvent[] CreateApprovalEvents(string runId, InboundMessage inboundMessage, DateTimeOffset createdAt)
     {
         return new[]
         {
-            new RunEvent(runId, "RunApproved", now, ActorFrom(msg), new { }),
-            new RunEvent(runId, "ExecutionDispatched", now, "system", new { })
+            new RunEvent(runId, "RunApproved", createdAt, GetActorFromMessage(inboundMessage), new { }),
+            new RunEvent(runId, "ExecutionDispatched", createdAt, "system", new { })
         };
     }
 
@@ -197,39 +197,39 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         );
     }
 
-    private async Task<OrchestratorResult> HandleDenyAsync(InboundMessage msg, ParsedIntent intent)
+    private async Task<OrchestratorResult> HandleDenyAsync(InboundMessage inboundMessage, ParsedIntent intent)
     {
-        await _repository.MarkInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId, null);
+        await _repository.MarkInboxProcessedAsync(inboundMessage.ChannelId, inboundMessage.ProviderMessageId, null);
 
         if (string.IsNullOrWhiteSpace(intent.RunId))
-            return Reply(msg, runId: null, "Missing run id. Usage: no <runId>");
+            return CreateReplyMessage(inboundMessage, runId: null, "Missing run id. Usage: no <runId>");
 
         var runId = intent.RunId!.Trim();
         var run = await _repository.GetRunAsync(runId);
 
         if (run == null)
-            return Reply(msg, runId: null, $"Unknown run id: {runId}");
+            return CreateReplyMessage(inboundMessage, runId: null, $"Unknown run id: {runId}");
 
-        var now = DateTimeOffset.UtcNow;
-        var events = CreateDenialEvents(runId, msg, now);
+        var createdAt = DateTimeOffset.UtcNow;
+        var denialEvents = CreateDenialEvents(runId, inboundMessage, createdAt);
 
-        var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.AwaitingApproval, RunStatus.Denied, events);
+        var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.AwaitingApproval, RunStatus.Denied, denialEvents);
 
         if (updatedRun == null)
         {
             var currentStatus = await _repository.GetRunStatusAsync(runId);
-            return Reply(msg, runId: run.RunId, $"Cannot deny run {run.RunId} in state {currentStatus}.");
+            return CreateReplyMessage(inboundMessage, runId: run.RunId, $"Cannot deny run {run.RunId} in state {currentStatus}.");
         }
 
         var denialMessage = CreateDenialMessage(updatedRun);
-        return Reply(msg, runId: updatedRun.RunId, denialMessage);
+        return CreateReplyMessage(inboundMessage, runId: updatedRun.RunId, denialMessage);
     }
 
-    private static RunEvent[] CreateDenialEvents(string runId, InboundMessage msg, DateTimeOffset now)
+    private static RunEvent[] CreateDenialEvents(string runId, InboundMessage inboundMessage, DateTimeOffset createdAt)
     {
         return new[]
         {
-            new RunEvent(runId, "RunDenied", now, ActorFrom(msg), new { })
+            new RunEvent(runId, "RunDenied", createdAt, GetActorFromMessage(inboundMessage), new { })
         };
     }
 
@@ -238,33 +238,33 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         return $"Denied run {updatedRun.RunId} for job \"{updatedRun.JobKey}\".";
     }
 
-    private async Task<OrchestratorResult> HandleStatusAsync(InboundMessage msg, ParsedIntent intent)
+    private async Task<OrchestratorResult> HandleStatusAsync(InboundMessage inboundMessage, ParsedIntent intent)
     {
-        await _repository.MarkInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId, null);
+        await _repository.MarkInboxProcessedAsync(inboundMessage.ChannelId, inboundMessage.ProviderMessageId, null);
 
         if (string.IsNullOrWhiteSpace(intent.RunId))
-            return Reply(msg, runId: null, "Missing run id. Usage: status <runId>");
+            return CreateReplyMessage(inboundMessage, runId: null, "Missing run id. Usage: status <runId>");
 
         var runId = intent.RunId!.Trim();
         var run = await _repository.GetRunAsync(runId);
 
         if (run == null)
-            return Reply(msg, runId: null, $"Unknown run id: {runId}");
+            return CreateReplyMessage(inboundMessage, runId: null, $"Unknown run id: {runId}");
 
-        var body =
+        var messageBody =
             $"Run {run.RunId}\n" +
             $"Job: {run.JobKey}\n" +
             $"State: {run.Status}\n" +
             $"Created: {run.CreatedAt:O}";
 
-        return Reply(msg, runId: run.RunId, body);
+        return CreateReplyMessage(inboundMessage, runId: run.RunId, messageBody);
     }
 
-    private async Task<OrchestratorResult> HandleUnknownAsync(InboundMessage msg)
+    private async Task<OrchestratorResult> HandleUnknownAsync(InboundMessage inboundMessage)
     {
-        await _repository.MarkInboxProcessedAsync(msg.ChannelId, msg.ProviderMessageId, null);
+        await _repository.MarkInboxProcessedAsync(inboundMessage.ChannelId, inboundMessage.ProviderMessageId, null);
 
-        var body =
+        var messageBody =
             "Unknown command.\n" +
             "Try:\n" +
             "- run <jobKey>\n" +
@@ -272,7 +272,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             "- no <runId>\n" +
             "- status <runId>";
 
-        return Reply(msg, runId: null, body);
+        return CreateReplyMessage(inboundMessage, runId: null, messageBody);
     }
 
     // ------------------------
@@ -287,10 +287,10 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             return CreateUnknownRunStartError(runId);
         }
 
-        var now = DateTimeOffset.UtcNow;
-        var events = CreateExecutionStartedEvent(runId, workerId, now);
+        var createdAt = DateTimeOffset.UtcNow;
+        var executionStartedEvents = CreateExecutionStartedEvent(runId, workerId, createdAt);
 
-        var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.Dispatching, RunStatus.Running, events);
+        var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.Dispatching, RunStatus.Running, executionStartedEvents);
 
         if (updatedRun == null)
         {
@@ -302,7 +302,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
 
     private static OrchestratorResult CreateUnknownRunStartError(string runId)
     {
-        var errorOutbound = new OutboundMessage(
+        var errorMessage = new OutboundMessage(
             ChannelId: "system",
             Conversation: new ConversationId("system"),
             To: null,
@@ -310,14 +310,14 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             CorrelationId: runId,
             IdempotencyKey: $"execution-started-error:{runId}"
         );
-        return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+        return new OrchestratorResult(runId, new[] { errorMessage }, DispatchedExecution: false, Dispatch: null);
     }
 
-    private static RunEvent[] CreateExecutionStartedEvent(string runId, string workerId, DateTimeOffset now)
+    private static RunEvent[] CreateExecutionStartedEvent(string runId, string workerId, DateTimeOffset createdAt)
     {
         return new[]
         {
-            new RunEvent(runId, "ExecutionStarted", now, $"worker:{workerId}", new { WorkerId = workerId })
+            new RunEvent(runId, "ExecutionStarted", createdAt, $"worker:{workerId}", new { WorkerId = workerId })
         };
     }
 
@@ -330,7 +330,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
         }
 
-        var errorOutbound = new OutboundMessage(
+        var errorMessage = new OutboundMessage(
             ChannelId: run.ChannelId,
             Conversation: new ConversationId(run.ConversationId),
             To: null,
@@ -338,7 +338,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             CorrelationId: runId,
             IdempotencyKey: $"execution-started-error-state:{runId}"
         );
-        return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+        return new OrchestratorResult(runId, new[] { errorMessage }, DispatchedExecution: false, Dispatch: null);
     }
 
     private async Task<OrchestratorResult> OnExecutionCompletedAsync(string runId, string workerId, bool success, string summary)
@@ -349,27 +349,27 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             return CreateUnknownRunCompletionError(runId);
         }
 
-        var newStatus = DetermineCompletionStatus(success);
-        var events = CreateCompletionEvent(runId, workerId, success, summary);
+        var targetStatus = DetermineCompletionStatus(success);
+        var completionEvents = CreateCompletionEvent(runId, workerId, success, summary);
 
         var updatedRun = await _repository.TryUpdateRunFromMultipleAsync(
             runId,
             new[] { RunStatus.Running, RunStatus.Dispatching },
-            newStatus,
-            events);
+            targetStatus,
+            completionEvents);
 
         if (updatedRun == null)
         {
             return await HandleCompletionError(runId, run);
         }
 
-        var completionOutbound = CreateCompletionMessage(runId, run, success, summary);
-        return new OrchestratorResult(runId, new[] { completionOutbound }, DispatchedExecution: false, Dispatch: null);
+        var completionMessage = CreateCompletionMessage(runId, run, success, summary);
+        return new OrchestratorResult(runId, new[] { completionMessage }, DispatchedExecution: false, Dispatch: null);
     }
 
     private static OrchestratorResult CreateUnknownRunCompletionError(string runId)
     {
-        var errorOutbound = new OutboundMessage(
+        var errorMessage = new OutboundMessage(
             ChannelId: "system",
             Conversation: new ConversationId("system"),
             To: null,
@@ -377,7 +377,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             CorrelationId: runId,
             IdempotencyKey: $"execution-completed-error:{runId}"
         );
-        return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+        return new OrchestratorResult(runId, new[] { errorMessage }, DispatchedExecution: false, Dispatch: null);
     }
 
     private static RunStatus DetermineCompletionStatus(bool success)
@@ -387,11 +387,11 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
 
     private static RunEvent[] CreateCompletionEvent(string runId, string workerId, bool success, string summary)
     {
-        var now = DateTimeOffset.UtcNow;
+        var createdAt = DateTimeOffset.UtcNow;
         var eventType = success ? "ExecutionSucceeded" : "ExecutionFailed";
         return new[]
         {
-            new RunEvent(runId, eventType, now, $"worker:{workerId}", new { WorkerId = workerId, Summary = summary })
+            new RunEvent(runId, eventType, createdAt, $"worker:{workerId}", new { WorkerId = workerId, Summary = summary })
         };
     }
 
@@ -404,7 +404,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
         }
 
-        var errorOutbound = new OutboundMessage(
+        var errorMessage = new OutboundMessage(
             ChannelId: run.ChannelId,
             Conversation: new ConversationId(run.ConversationId),
             To: null,
@@ -412,7 +412,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             CorrelationId: runId,
             IdempotencyKey: $"execution-completed-error-state:{runId}"
         );
-        return new OrchestratorResult(runId, new[] { errorOutbound }, DispatchedExecution: false, Dispatch: null);
+        return new OrchestratorResult(runId, new[] { errorMessage }, DispatchedExecution: false, Dispatch: null);
     }
 
     private static bool IsTerminalState(RunStatus? status)
@@ -440,23 +440,23 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
     // Helpers
     // ------------------------
 
-    private static OrchestratorResult Reply(InboundMessage msg, string? runId, string body)
+    private static OrchestratorResult CreateReplyMessage(InboundMessage inboundMessage, string? runId, string messageBody)
     {
-        var outbound = new OutboundMessage(
-            ChannelId: msg.ChannelId,
-            Conversation: msg.Conversation,
+        var outboundMessage = new OutboundMessage(
+            ChannelId: inboundMessage.ChannelId,
+            Conversation: inboundMessage.Conversation,
             To: null,
-            Body: body,
+            Body: messageBody,
             CorrelationId: runId ?? "none",
-            IdempotencyKey: $"reply:{msg.ChannelId}:{msg.ProviderMessageId}"
+            IdempotencyKey: $"reply:{inboundMessage.ChannelId}:{inboundMessage.ProviderMessageId}"
         );
 
-        return new OrchestratorResult(runId, new[] { outbound }, DispatchedExecution: false, Dispatch: null);
+        return new OrchestratorResult(runId, new[] { outboundMessage }, DispatchedExecution: false, Dispatch: null);
     }
 
-    private static string ActorFrom(InboundMessage msg) => $"user:{msg.From.Value}";
+    private static string GetActorFromMessage(InboundMessage inboundMessage) => $"user:{inboundMessage.From.Value}";
 
-    private static string NewRunId()
+    private static string GenerateRunId()
     {
         return Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
     }

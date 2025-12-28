@@ -50,10 +50,10 @@ public sealed class InMemoryExecutionQueueTests
         _queue.Enqueue(new ExecutionDispatch("run-1", "test-job"));
         var claimed = await _queue.ClaimNextAsync("worker-1");
         
-        await _queue.CompleteAsync(claimed!.QueueId, success: true, error: null);
+        await _queue.CompleteAsync(claimed!.QueueId, success: true, errorMessage: null);
         
         // Should not error - entry is removed
-        await _queue.CompleteAsync(claimed.QueueId, success: true, error: null);
+        await _queue.CompleteAsync(claimed.QueueId, success: true, errorMessage: null);
     }
 
     [Test]
@@ -64,7 +64,7 @@ public sealed class InMemoryExecutionQueueTests
         var claim1 = await _queue.ClaimNextAsync("worker-1");
         Assert.That(claim1!.Attempts, Is.EqualTo(1));
         
-        await _queue.ReleaseAsync(claim1.QueueId, error: "Retry");
+        await _queue.ReleaseAsync(claim1.QueueId, errorMessage: "Retry");
         
         var claim2 = await _queue.ClaimNextAsync("worker-1");
         Assert.That(claim2!.RunId, Is.EqualTo("run-1"));
