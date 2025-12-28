@@ -5,24 +5,24 @@ public class StatusTests : OrchestratorTestBase
 {
     private string _runId = null!;
 
-    public override void SetUp()
+    public override async Task SetUpAsync()
     {
-        base.SetUp();
+        await base.SetUpAsync();
 
         // Create a run first
         var createMsg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-{Guid.NewGuid()}");
         var createIntent = Parser.Parse(createMsg.Body);
-        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await Orchestrator.HandleInboundAsync(createMsg, createIntent);
         _runId = createResult.RunId!;
     }
 
     [Test]
-    public void HandleInbound_Status_ReturnsRunInformation()
+    public async Task HandleInbound_Status_ReturnsRunInformation()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"status {_runId}", providerMessageId: $"status-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -36,12 +36,12 @@ public class StatusTests : OrchestratorTestBase
     }
 
     [Test]
-    public void HandleInbound_StatusUnknownRun_ReturnsError()
+    public async Task HandleInbound_StatusUnknownRun_ReturnsError()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "status UNKNOWN123", providerMessageId: $"status-unknown-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
         Assert.Multiple(() =>
         {

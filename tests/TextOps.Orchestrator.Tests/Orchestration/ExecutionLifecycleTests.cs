@@ -6,24 +6,24 @@ namespace TextOps.Orchestrator.Tests.Orchestration;
 public sealed class ExecutionLifecycleTests : OrchestratorTestBase
 {
     [Test]
-    public void OnExecutionStarted_ThenCompleted_Success_TransitionsToSucceeded()
+    public async Task OnExecutionStarted_ThenCompleted_Success_TransitionsToSucceeded()
     {
         // Arrange: create and approve run
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "m1");
         var createIntent = TestHelpers.Parse(Parser, createMsg);
-        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await Orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "m2");
         var approveIntent = TestHelpers.Parse(Parser, approveMsg);
-        Orchestrator.HandleInbound(approveMsg, approveIntent);
+        await Orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
         // Act: execute lifecycle
-        Orchestrator.OnExecutionStarted(runId, "worker-1");
-        var completionResult = Orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok");
+        await Orchestrator.OnExecutionStartedAsync(runId, "worker-1");
+        var completionResult = await Orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: true, summary: "ok");
 
         // Assert: terminal state and events
-        var timeline = Orchestrator.GetTimeline(runId);
+        var timeline = await Orchestrator.GetTimelineAsync(runId);
         Assert.Multiple(() =>
         {
             Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Succeeded), "Run should be in Succeeded state");
@@ -32,7 +32,7 @@ public sealed class ExecutionLifecycleTests : OrchestratorTestBase
             Assert.That(completionResult.Outbound[0].Body, Does.Contain(runId), "Outbound message should contain run ID");
         });
 
-        var eventTypes = TestHelpers.GetEventTypes(Orchestrator, runId);
+        var eventTypes = await TestHelpers.GetEventTypesAsync(Orchestrator, runId);
         Assert.Multiple(() =>
         {
             Assert.That(eventTypes, Contains.Item("RunCreated"));
@@ -45,24 +45,24 @@ public sealed class ExecutionLifecycleTests : OrchestratorTestBase
     }
 
     [Test]
-    public void OnExecutionStarted_ThenCompleted_Failure_TransitionsToFailed()
+    public async Task OnExecutionStarted_ThenCompleted_Failure_TransitionsToFailed()
     {
         // Arrange: create and approve run
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "m1");
         var createIntent = TestHelpers.Parse(Parser, createMsg);
-        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await Orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "m2");
         var approveIntent = TestHelpers.Parse(Parser, approveMsg);
-        Orchestrator.HandleInbound(approveMsg, approveIntent);
+        await Orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
         // Act: execute lifecycle with failure
-        Orchestrator.OnExecutionStarted(runId, "worker-1");
-        var completionResult = Orchestrator.OnExecutionCompleted(runId, "worker-1", success: false, summary: "boom");
+        await Orchestrator.OnExecutionStartedAsync(runId, "worker-1");
+        var completionResult = await Orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: false, summary: "boom");
 
         // Assert: terminal state and events
-        var timeline = Orchestrator.GetTimeline(runId);
+        var timeline = await Orchestrator.GetTimelineAsync(runId);
         Assert.Multiple(() =>
         {
             Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Failed), "Run should be in Failed state");
@@ -71,39 +71,39 @@ public sealed class ExecutionLifecycleTests : OrchestratorTestBase
             Assert.That(completionResult.Outbound[0].Body, Does.Contain(runId), "Outbound message should contain run ID");
         });
 
-        var eventTypes = TestHelpers.GetEventTypes(Orchestrator, runId);
+        var eventTypes = await TestHelpers.GetEventTypesAsync(Orchestrator, runId);
         Assert.That(eventTypes, Contains.Item("ExecutionFailed"), "Should have ExecutionFailed event");
     }
 
     [Test]
-    public void OnExecutionCompleted_WithoutStarted_FromDispatching_TransitionsToTerminal()
+    public async Task OnExecutionCompleted_WithoutStarted_FromDispatching_TransitionsToTerminal()
     {
         // Arrange: create and approve run (now in Dispatching)
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "m1");
         var createIntent = TestHelpers.Parse(Parser, createMsg);
-        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await Orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "m2");
         var approveIntent = TestHelpers.Parse(Parser, approveMsg);
-        Orchestrator.HandleInbound(approveMsg, approveIntent);
+        await Orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
         // Verify we're in Dispatching
-        var timelineBefore = Orchestrator.GetTimeline(runId);
+        var timelineBefore = await Orchestrator.GetTimelineAsync(runId);
         Assert.That(timelineBefore.Run.Status, Is.EqualTo(RunStatus.Dispatching));
 
         // Act: complete without started (robustness: handle missed started event)
-        var completionResult = Orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok");
+        var completionResult = await Orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: true, summary: "ok");
 
         // Assert: transitions to terminal state
-        var timeline = Orchestrator.GetTimeline(runId);
+        var timeline = await Orchestrator.GetTimelineAsync(runId);
         Assert.Multiple(() =>
         {
             Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Succeeded), "Should transition to Succeeded");
             Assert.That(completionResult.Outbound, Has.Count.EqualTo(1), "Should emit completion message");
         });
 
-        var eventTypes = TestHelpers.GetEventTypes(Orchestrator, runId);
+        var eventTypes = await TestHelpers.GetEventTypesAsync(Orchestrator, runId);
         Assert.Multiple(() =>
         {
             Assert.That(eventTypes, Contains.Item("ExecutionDispatched"));
@@ -113,10 +113,10 @@ public sealed class ExecutionLifecycleTests : OrchestratorTestBase
     }
 
     [Test]
-    public void OnExecutionStarted_UnknownRunId_ReturnsErrorOutbound()
+    public async Task OnExecutionStarted_UnknownRunId_ReturnsErrorOutbound()
     {
         // Act
-        var result = Orchestrator.OnExecutionStarted("NOPE", "worker-1");
+        var result = await Orchestrator.OnExecutionStartedAsync("NOPE", "worker-1");
 
         // Assert: returns error message, no exception
         Assert.Multiple(() =>
@@ -128,10 +128,10 @@ public sealed class ExecutionLifecycleTests : OrchestratorTestBase
     }
 
     [Test]
-    public void OnExecutionCompleted_UnknownRunId_ReturnsErrorOutbound()
+    public async Task OnExecutionCompleted_UnknownRunId_ReturnsErrorOutbound()
     {
         // Act
-        var result = Orchestrator.OnExecutionCompleted("NOPE", "worker-1", success: true, summary: "ok");
+        var result = await Orchestrator.OnExecutionCompletedAsync("NOPE", "worker-1", success: true, summary: "ok");
 
         // Assert: returns error message, no exception
         Assert.Multiple(() =>
@@ -143,16 +143,16 @@ public sealed class ExecutionLifecycleTests : OrchestratorTestBase
     }
 
     [Test]
-    public void OnExecutionCompleted_InvalidState_ReturnsErrorOutbound()
+    public async Task OnExecutionCompleted_InvalidState_ReturnsErrorOutbound()
     {
         // Arrange: create run (AwaitingApproval, not Running/Dispatching)
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "m1");
         var createIntent = TestHelpers.Parse(Parser, createMsg);
-        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await Orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         // Act: try to complete from AwaitingApproval
-        var result = Orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, summary: "ok");
+        var result = await Orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: true, summary: "ok");
 
         // Assert: error message, state unchanged
         Assert.Multiple(() =>
@@ -161,7 +161,7 @@ public sealed class ExecutionLifecycleTests : OrchestratorTestBase
             Assert.That(result.Outbound[0].Body, Does.Contain("Cannot complete"));
         });
 
-        var timeline = Orchestrator.GetTimeline(runId);
+        var timeline = await Orchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.AwaitingApproval), "State should remain unchanged");
     }
 }

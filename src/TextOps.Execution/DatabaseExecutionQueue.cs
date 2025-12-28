@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TextOps.Contracts.Execution;
+using TextOps.Persistence;
 using TextOps.Persistence.Entities;
 
-namespace TextOps.Persistence.Queue;
+namespace TextOps.Execution;
 
 /// <summary>
 /// Database-backed execution queue using PostgreSQL FOR UPDATE SKIP LOCKED.
@@ -51,8 +52,7 @@ public sealed class DatabaseExecutionQueue : IExecutionQueue
     }
 
     private static ExecutionQueueEntity CreateQueueEntry(ExecutionDispatch executionDispatch)
-    {
-        return new ExecutionQueueEntity
+        => new ExecutionQueueEntity
         {
             RunId = executionDispatch.RunId,
             JobKey = executionDispatch.JobKey,
@@ -60,7 +60,6 @@ public sealed class DatabaseExecutionQueue : IExecutionQueue
             CreatedAt = DateTimeOffset.UtcNow,
             Attempts = 0
         };
-    }
 
     public async Task<QueuedDispatch?> ClaimNextAsync(string workerId, CancellationToken cancellationToken = default)
     {
@@ -194,3 +193,4 @@ public sealed class DatabaseExecutionQueue : IExecutionQueue
             staleQueueEntry.Id, staleQueueEntry.RunId, previousWorker);
     }
 }
+

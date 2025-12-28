@@ -1,7 +1,7 @@
 using TextOps.Contracts.Orchestration;
 using TextOps.Contracts.Runs;
 
-namespace TextOps.Persistence.Repositories;
+namespace TextOps.Contracts.Persistence;
 
 /// <summary>
 /// Repository interface for run persistence operations.

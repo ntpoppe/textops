@@ -16,7 +16,7 @@ public class PersistentOrchestratorTests
     private PersistentRunOrchestrator _orchestrator = null!;
 
     [SetUp]
-    public void SetUp()
+    public async Task SetUp()
     {
         var options = new DbContextOptionsBuilder<TextOpsDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
@@ -28,7 +28,7 @@ public class PersistentOrchestratorTests
     }
 
     [TearDown]
-    public void TearDown()
+    public async Task TearDown()
     {
         _db.Dispose();
     }
@@ -38,31 +38,31 @@ public class PersistentOrchestratorTests
     // ===========================================
 
     [Test]
-    public void HandleInbound_DuplicateMessage_ReturnsEmptyResult()
+    public async Task HandleInbound_DuplicateMessage_ReturnsEmptyResult()
     {
         var msg = CreateInboundMessage("msg-001");
         var intent = new ParsedIntent(IntentType.RunJob, "run backup", "backup", null);
 
         // First call creates run
-        var result1 = _orchestrator.HandleInbound(msg, intent);
+        var result1 = await _orchestrator.HandleInboundAsync(msg, intent);
         Assert.That(result1.RunId, Is.Not.Null);
         Assert.That(result1.Outbound.Count, Is.EqualTo(1));
 
         // Second call with same message ID is a no-op
-        var result2 = _orchestrator.HandleInbound(msg, intent);
+        var result2 = await _orchestrator.HandleInboundAsync(msg, intent);
         Assert.That(result2.RunId, Is.Null);
         Assert.That(result2.Outbound, Is.Empty);
     }
 
     [Test]
-    public void HandleInbound_DifferentMessageId_CreatesNewRun()
+    public async Task HandleInbound_DifferentMessageId_CreatesNewRun()
     {
         var msg1 = CreateInboundMessage("msg-001");
         var msg2 = CreateInboundMessage("msg-002");
         var intent = new ParsedIntent(IntentType.RunJob, "run backup", "backup", null);
 
-        var result1 = _orchestrator.HandleInbound(msg1, intent);
-        var result2 = _orchestrator.HandleInbound(msg2, intent);
+        var result1 = await _orchestrator.HandleInboundAsync(msg1, intent);
+        var result2 = await _orchestrator.HandleInboundAsync(msg2, intent);
 
         Assert.That(result1.RunId, Is.Not.Null);
         Assert.That(result2.RunId, Is.Not.Null);
@@ -74,17 +74,17 @@ public class PersistentOrchestratorTests
     // ===========================================
 
     [Test]
-    public void HandleInbound_RunJob_CreatesRunInAwaitingApproval()
+    public async Task HandleInbound_RunJob_CreatesRunInAwaitingApproval()
     {
         var msg = CreateInboundMessage("msg-001");
         var intent = new ParsedIntent(IntentType.RunJob, "run backup", "backup", null);
 
-        var result = _orchestrator.HandleInbound(msg, intent);
+        var result = await _orchestrator.HandleInboundAsync(msg, intent);
 
         Assert.That(result.RunId, Is.Not.Null);
         Assert.That(result.DispatchedExecution, Is.False);
 
-        var timeline = _orchestrator.GetTimeline(result.RunId!);
+        var timeline = await _orchestrator.GetTimelineAsync(result.RunId!);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.AwaitingApproval));
         Assert.That(timeline.Events.Count, Is.EqualTo(2)); // RunCreated, ApprovalRequested
     }
@@ -94,43 +94,44 @@ public class PersistentOrchestratorTests
     // ===========================================
 
     [Test]
-    public void HandleInbound_ApproveRun_TransitionsToDispatching()
+    public async Task HandleInbound_ApproveRun_TransitionsToDispatching()
     {
         // Create run
         var createMsg = CreateInboundMessage("msg-001");
         var createIntent = new ParsedIntent(IntentType.RunJob, "run backup", "backup", null);
-        var createResult = _orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await _orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = createResult.RunId!;
 
         // Approve run
         var approveMsg = CreateInboundMessage("msg-002");
         var approveIntent = new ParsedIntent(IntentType.ApproveRun, $"yes {runId}", null, runId);
-        var approveResult = _orchestrator.HandleInbound(approveMsg, approveIntent);
+        var approveResult = await _orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
         Assert.That(approveResult.RunId, Is.EqualTo(runId));
         Assert.That(approveResult.DispatchedExecution, Is.True);
         Assert.That(approveResult.Dispatch, Is.Not.Null);
         Assert.That(approveResult.Dispatch!.RunId, Is.EqualTo(runId));
 
-        var timeline = _orchestrator.GetTimeline(runId);
+        var timeline = await _orchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Dispatching));
     }
 
     [Test]
-    public void HandleInbound_ApproveAlreadyApprovedRun_ReturnsError()
+    public async Task HandleInbound_ApproveAlreadyApprovedRun_ReturnsError()
     {
         // Create and approve run
         var createMsg = CreateInboundMessage("msg-001");
         var createIntent = new ParsedIntent(IntentType.RunJob, "run backup", "backup", null);
-        var runId = _orchestrator.HandleInbound(createMsg, createIntent).RunId!;
+        var result = await _orchestrator.HandleInboundAsync(createMsg, createIntent);
+        var runId = result.RunId!;
 
         var approveMsg1 = CreateInboundMessage("msg-002");
         var approveIntent = new ParsedIntent(IntentType.ApproveRun, $"yes {runId}", null, runId);
-        _orchestrator.HandleInbound(approveMsg1, approveIntent);
+        await _orchestrator.HandleInboundAsync(approveMsg1, approveIntent);
 
         // Try to approve again
         var approveMsg2 = CreateInboundMessage("msg-003");
-        var approveResult = _orchestrator.HandleInbound(approveMsg2, approveIntent);
+        var approveResult = await _orchestrator.HandleInboundAsync(approveMsg2, approveIntent);
 
         Assert.That(approveResult.DispatchedExecution, Is.False);
         Assert.That(approveResult.Outbound[0].Body, Does.Contain("Cannot approve"));
@@ -141,22 +142,23 @@ public class PersistentOrchestratorTests
     // ===========================================
 
     [Test]
-    public void HandleInbound_DenyRun_TransitionsToDenied()
+    public async Task HandleInbound_DenyRun_TransitionsToDenied()
     {
         // Create run
         var createMsg = CreateInboundMessage("msg-001");
         var createIntent = new ParsedIntent(IntentType.RunJob, "run backup", "backup", null);
-        var runId = _orchestrator.HandleInbound(createMsg, createIntent).RunId!;
+        var result = await _orchestrator.HandleInboundAsync(createMsg, createIntent);
+        var runId = result.RunId!;
 
         // Deny run
         var denyMsg = CreateInboundMessage("msg-002");
         var denyIntent = new ParsedIntent(IntentType.DenyRun, $"no {runId}", null, runId);
-        var denyResult = _orchestrator.HandleInbound(denyMsg, denyIntent);
+        var denyResult = await _orchestrator.HandleInboundAsync(denyMsg, denyIntent);
 
         Assert.That(denyResult.RunId, Is.EqualTo(runId));
         Assert.That(denyResult.DispatchedExecution, Is.False);
 
-        var timeline = _orchestrator.GetTimeline(runId);
+        var timeline = await _orchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Denied));
     }
 
@@ -165,51 +167,52 @@ public class PersistentOrchestratorTests
     // ===========================================
 
     [Test]
-    public void OnExecutionStarted_TransitionsToRunning()
+    public async Task OnExecutionStarted_TransitionsToRunning()
     {
         // Create and approve run
         var createMsg = CreateInboundMessage("msg-001");
         var createIntent = new ParsedIntent(IntentType.RunJob, "run backup", "backup", null);
-        var runId = _orchestrator.HandleInbound(createMsg, createIntent).RunId!;
+        var result = await _orchestrator.HandleInboundAsync(createMsg, createIntent);
+        var runId = result.RunId!;
 
         var approveMsg = CreateInboundMessage("msg-002");
         var approveIntent = new ParsedIntent(IntentType.ApproveRun, $"yes {runId}", null, runId);
-        _orchestrator.HandleInbound(approveMsg, approveIntent);
+        await _orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
         // Start execution
-        var result = _orchestrator.OnExecutionStarted(runId, "worker-1");
+        var startResult = await _orchestrator.OnExecutionStartedAsync(runId, "worker-1");
 
         Assert.That(result.RunId, Is.EqualTo(runId));
 
-        var timeline = _orchestrator.GetTimeline(runId);
+        var timeline = await _orchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Running));
     }
 
     [Test]
-    public void OnExecutionCompleted_Success_TransitionsToSucceeded()
+    public async Task OnExecutionCompleted_Success_TransitionsToSucceeded()
     {
         // Create, approve, and start run
-        var runId = CreateAndStartRun();
+        var runId = await CreateAndStartRunAsync();
 
         // Complete execution
-        var result = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, "Completed successfully");
+        var result = await _orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: true, "Completed successfully");
 
         Assert.That(result.RunId, Is.EqualTo(runId));
         Assert.That(result.Outbound.Count, Is.EqualTo(1));
         Assert.That(result.Outbound[0].Body, Does.Contain("succeeded"));
 
-        var timeline = _orchestrator.GetTimeline(runId);
+        var timeline = await _orchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Succeeded));
     }
 
     [Test]
-    public void OnExecutionCompleted_Failure_TransitionsToFailed()
+    public async Task OnExecutionCompleted_Failure_TransitionsToFailed()
     {
-        var runId = CreateAndStartRun();
+        var runId = await CreateAndStartRunAsync();
 
-        var result = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: false, "Something went wrong");
+        var result = await _orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: false, "Something went wrong");
 
-        var timeline = _orchestrator.GetTimeline(runId);
+        var timeline = await _orchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Failed));
         Assert.That(result.Outbound[0].Body, Does.Contain("failed"));
     }
@@ -219,33 +222,33 @@ public class PersistentOrchestratorTests
     // ===========================================
 
     [Test]
-    public void OnExecutionStarted_AlreadyRunning_IsNoOp()
+    public async Task OnExecutionStarted_AlreadyRunning_IsNoOp()
     {
-        var runId = CreateAndStartRun();
+        var runId = await CreateAndStartRunAsync();
 
         // Try to start again
-        var result = _orchestrator.OnExecutionStarted(runId, "worker-2");
+        var result = await _orchestrator.OnExecutionStartedAsync(runId, "worker-2");
 
         Assert.That(result.Outbound, Is.Empty);
 
-        var timeline = _orchestrator.GetTimeline(runId);
+        var timeline = await _orchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Running));
     }
 
     [Test]
-    public void OnExecutionCompleted_AlreadyCompleted_IsNoOp()
+    public async Task OnExecutionCompleted_AlreadyCompleted_IsNoOp()
     {
-        var runId = CreateAndStartRun();
+        var runId = await CreateAndStartRunAsync();
 
         // Complete once
-        _orchestrator.OnExecutionCompleted(runId, "worker-1", success: true, "First completion");
+        await _orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: true, "First completion");
 
         // Try to complete again
-        var result = _orchestrator.OnExecutionCompleted(runId, "worker-1", success: false, "Second completion");
+        var result = await _orchestrator.OnExecutionCompletedAsync(runId, "worker-1", success: false, "Second completion");
 
         Assert.That(result.Outbound, Is.Empty);
 
-        var timeline = _orchestrator.GetTimeline(runId);
+        var timeline = await _orchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Succeeded)); // Still succeeded
     }
 
@@ -254,13 +257,14 @@ public class PersistentOrchestratorTests
     // ===========================================
 
     [Test]
-    public void GetTimeline_AfterRunCreation_IncludesAllEvents()
+    public async Task GetTimeline_AfterRunCreation_IncludesAllEvents()
     {
         var msg = CreateInboundMessage("msg-001");
         var intent = new ParsedIntent(IntentType.RunJob, "run backup", "backup", null);
-        var runId = _orchestrator.HandleInbound(msg, intent).RunId!;
+        var createResult = await _orchestrator.HandleInboundAsync(msg, intent);
+        var runId = createResult.RunId!;
 
-        var timeline = _orchestrator.GetTimeline(runId);
+        var timeline = await _orchestrator.GetTimelineAsync(runId);
 
         Assert.That(timeline.Run.RunId, Is.EqualTo(runId));
         Assert.That(timeline.Run.JobKey, Is.EqualTo("backup"));
@@ -269,9 +273,9 @@ public class PersistentOrchestratorTests
     }
 
     [Test]
-    public void GetTimeline_NonExistentRun_ThrowsKeyNotFoundException()
+    public async Task GetTimeline_NonExistentRun_ThrowsKeyNotFoundException()
     {
-        Assert.Throws<KeyNotFoundException>(() => _orchestrator.GetTimeline("NONEXISTENT"));
+        Assert.ThrowsAsync<KeyNotFoundException>(async () => await _orchestrator.GetTimelineAsync("NONEXISTENT"));
     }
 
     // ===========================================
@@ -292,17 +296,18 @@ public class PersistentOrchestratorTests
         );
     }
 
-    private string CreateAndStartRun()
+    private async Task<string> CreateAndStartRunAsync()
     {
         var createMsg = CreateInboundMessage($"msg-{Guid.NewGuid():N}");
         var createIntent = new ParsedIntent(IntentType.RunJob, "run backup", "backup", null);
-        var runId = _orchestrator.HandleInbound(createMsg, createIntent).RunId!;
+        var createResult = await _orchestrator.HandleInboundAsync(createMsg, createIntent);
+        var runId = createResult.RunId!;
 
         var approveMsg = CreateInboundMessage($"msg-{Guid.NewGuid():N}");
         var approveIntent = new ParsedIntent(IntentType.ApproveRun, $"yes {runId}", null, runId);
-        _orchestrator.HandleInbound(approveMsg, approveIntent);
+        await _orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
-        _orchestrator.OnExecutionStarted(runId, "worker-1");
+        await _orchestrator.OnExecutionStartedAsync(runId, "worker-1");
 
         return runId;
     }

@@ -1,12 +1,9 @@
-using Microsoft.Extensions.Logging;
 using TextOps.Contracts.Execution;
 using TextOps.Contracts.Orchestration;
 using TextOps.Orchestrator.Orchestration;
+using TextOps.Execution;
 using TextOps.Persistence;
-using TextOps.Persistence.Queue;
-using TextOps.Persistence.Repositories;
 using TextOps.Worker;
-using TextOps.Worker.Stub;
 
 var builder = Host.CreateApplicationBuilder(args);
 

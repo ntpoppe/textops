@@ -18,11 +18,11 @@ public sealed class RunsController : ControllerBase
     [HttpGet("{runId}")]
     [ProducesResponseType(typeof(TimelineResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-    public IActionResult GetTimeline(string runId)
+    public async Task<IActionResult> GetTimeline(string runId)
     {
         try
         {
-            var timeline = _orchestrator.GetTimeline(runId);
+            var timeline = await _orchestrator.GetTimelineAsync(runId);
             var response = MapTimelineToResponse(timeline);
             return Ok(response);
         }

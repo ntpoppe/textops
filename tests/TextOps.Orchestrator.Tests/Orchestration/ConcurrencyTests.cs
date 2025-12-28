@@ -58,17 +58,17 @@ public sealed class ConcurrencyTests
     }
 
     [Test]
-    public void ConcurrentApprovals_OnlyOneSucceeds()
+    public async Task ConcurrentApprovals_OnlyOneSucceeds()
     {
         // Arrange: create a run in AwaitingApproval state (single-threaded setup)
         var orchestrator = CreateOrchestrator();
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "create-1");
         var createIntent = TestHelpers.Parse(_parser, createMsg);
-        var createResult = orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         // Verify initial state
-        Assert.That(orchestrator.GetTimeline(runId).Run.Status, Is.EqualTo(RunStatus.AwaitingApproval));
+        Assert.That((await orchestrator.GetTimelineAsync(runId)).Run.Status, Is.EqualTo(RunStatus.AwaitingApproval));
 
         // Act: attempt concurrent approvals with different message IDs
         var approveResults = new List<(string msgId, bool dispatched)>();
@@ -78,7 +78,7 @@ public sealed class ConcurrencyTests
         for (int i = 0; i < 10; i++)
         {
             var msgId = $"approve-{i}";
-            tasks.Add(Task.Run(() =>
+            tasks.Add(Task.Run(async () =>
             {
                 // Each thread gets its own orchestrator (and DbContext)
                 var threadOrchestrator = CreateOrchestrator();
@@ -88,7 +88,7 @@ public sealed class ConcurrencyTests
                 // Synchronize all threads to start at the same time
                 barrier.SignalAndWait();
                 
-                var result = threadOrchestrator.HandleInbound(approveMsg, approveIntent);
+                var result = await threadOrchestrator.HandleInboundAsync(approveMsg, approveIntent);
                 lock (approveResults)
                 {
                     approveResults.Add((msgId, result.DispatchedExecution));
@@ -105,7 +105,7 @@ public sealed class ConcurrencyTests
 
         // Assert: run is in Dispatching state (or further if worker ran)
         var finalOrchestrator = CreateOrchestrator();
-        var timeline = finalOrchestrator.GetTimeline(runId);
+        var timeline = await finalOrchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.AnyOf(RunStatus.Dispatching, RunStatus.Running, RunStatus.Succeeded, RunStatus.Failed),
             "Run should be in Dispatching or later state");
 
@@ -119,13 +119,13 @@ public sealed class ConcurrencyTests
     }
 
     [Test]
-    public void ConcurrentDenials_OnlyOneSucceeds()
+    public async Task ConcurrentDenials_OnlyOneSucceeds()
     {
         // Arrange: create a run in AwaitingApproval state
         var orchestrator = CreateOrchestrator();
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "create-1");
         var createIntent = TestHelpers.Parse(_parser, createMsg);
-        var createResult = orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         // Act: attempt concurrent denials
@@ -135,7 +135,7 @@ public sealed class ConcurrencyTests
         for (int i = 0; i < 10; i++)
         {
             var msgId = $"deny-{i}";
-            tasks.Add(Task.Run(() =>
+            tasks.Add(Task.Run(async () =>
             {
                 var threadOrchestrator = CreateOrchestrator();
                 var denyMsg = TestHelpers.CreateInboundMessage($"no {runId}", msgId);
@@ -143,7 +143,7 @@ public sealed class ConcurrencyTests
                 
                 barrier.SignalAndWait();
                 
-                threadOrchestrator.HandleInbound(denyMsg, denyIntent);
+                await threadOrchestrator.HandleInboundAsync(denyMsg, denyIntent);
             }));
         }
 
@@ -151,7 +151,7 @@ public sealed class ConcurrencyTests
 
         // Assert: run is in Denied state
         var finalOrchestrator = CreateOrchestrator();
-        var timeline = finalOrchestrator.GetTimeline(runId);
+        var timeline = await finalOrchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Denied));
 
         // Assert: exactly one RunDenied event (only one denial actually transitioned the state)
@@ -160,20 +160,20 @@ public sealed class ConcurrencyTests
     }
 
     [Test]
-    public void ConcurrentExecutionStarted_OnlyOneTransitions()
+    public async Task ConcurrentExecutionStarted_OnlyOneTransitions()
     {
         // Arrange: create and approve a run (now in Dispatching)
         var orchestrator = CreateOrchestrator();
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "create-1");
         var createIntent = TestHelpers.Parse(_parser, createMsg);
-        var createResult = orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "approve-1");
         var approveIntent = TestHelpers.Parse(_parser, approveMsg);
-        orchestrator.HandleInbound(approveMsg, approveIntent);
+        await orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
-        Assert.That(orchestrator.GetTimeline(runId).Run.Status, Is.EqualTo(RunStatus.Dispatching));
+        Assert.That((await orchestrator.GetTimelineAsync(runId)).Run.Status, Is.EqualTo(RunStatus.Dispatching));
 
         // Act: attempt concurrent execution started calls
         var barrier = new Barrier(10);
@@ -182,11 +182,11 @@ public sealed class ConcurrencyTests
         for (int i = 0; i < 10; i++)
         {
             var workerId = $"worker-{i}";
-            tasks.Add(Task.Run(() =>
+            tasks.Add(Task.Run(async () =>
             {
                 var threadOrchestrator = CreateOrchestrator();
                 barrier.SignalAndWait();
-                threadOrchestrator.OnExecutionStarted(runId, workerId);
+                await threadOrchestrator.OnExecutionStartedAsync(runId, workerId);
             }));
         }
 
@@ -194,7 +194,7 @@ public sealed class ConcurrencyTests
 
         // Assert: run is in Running state
         var finalOrchestrator = CreateOrchestrator();
-        var timeline = finalOrchestrator.GetTimeline(runId);
+        var timeline = await finalOrchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Running));
 
         // Assert: exactly one ExecutionStarted event (only one worker succeeded in transitioning)
@@ -203,21 +203,21 @@ public sealed class ConcurrencyTests
     }
 
     [Test]
-    public void ConcurrentExecutionCompleted_OnlyOneTransitions()
+    public async Task ConcurrentExecutionCompleted_OnlyOneTransitions()
     {
         // Arrange: create, approve, and start a run
         var orchestrator = CreateOrchestrator();
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "create-1");
         var createIntent = TestHelpers.Parse(_parser, createMsg);
-        var createResult = orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         var approveMsg = TestHelpers.CreateInboundMessage($"yes {runId}", "approve-1");
         var approveIntent = TestHelpers.Parse(_parser, approveMsg);
-        orchestrator.HandleInbound(approveMsg, approveIntent);
+        await orchestrator.HandleInboundAsync(approveMsg, approveIntent);
 
-        orchestrator.OnExecutionStarted(runId, "worker-0");
-        Assert.That(orchestrator.GetTimeline(runId).Run.Status, Is.EqualTo(RunStatus.Running));
+        await orchestrator.OnExecutionStartedAsync(runId, "worker-0");
+        Assert.That((await orchestrator.GetTimelineAsync(runId)).Run.Status, Is.EqualTo(RunStatus.Running));
 
         // Act: attempt concurrent execution completed calls with different outcomes
         var barrier = new Barrier(10);
@@ -227,11 +227,11 @@ public sealed class ConcurrencyTests
         {
             var workerId = $"worker-{i}";
             var success = i % 2 == 0; // Alternate success/failure
-            tasks.Add(Task.Run(() =>
+            tasks.Add(Task.Run(async () =>
             {
                 var threadOrchestrator = CreateOrchestrator();
                 barrier.SignalAndWait();
-                threadOrchestrator.OnExecutionCompleted(runId, workerId, success, $"Result from {workerId}");
+                await threadOrchestrator.OnExecutionCompletedAsync(runId, workerId, success, $"Result from {workerId}");
             }));
         }
 
@@ -239,7 +239,7 @@ public sealed class ConcurrencyTests
 
         // Assert: run is in a terminal state
         var finalOrchestrator = CreateOrchestrator();
-        var timeline = finalOrchestrator.GetTimeline(runId);
+        var timeline = await finalOrchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.AnyOf(RunStatus.Succeeded, RunStatus.Failed),
             "Run should be in a terminal state");
 
@@ -249,40 +249,40 @@ public sealed class ConcurrencyTests
     }
 
     [Test]
-    public void ConcurrentApproveAndDeny_OnlyOneSucceeds()
+    public async Task ConcurrentApproveAndDeny_OnlyOneSucceeds()
     {
         // Arrange: create a run in AwaitingApproval state
         var orchestrator = CreateOrchestrator();
         var createMsg = TestHelpers.CreateInboundMessage("run demo", "create-1");
         var createIntent = TestHelpers.Parse(_parser, createMsg);
-        var createResult = orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await orchestrator.HandleInboundAsync(createMsg, createIntent);
         var runId = TestHelpers.ExtractRunIdFromResult(createResult);
 
         // Act: attempt concurrent approve and deny
         var barrier = new Barrier(2);
-        var approveTask = Task.Run(() =>
+        var approveTask = Task.Run(async () =>
         {
             var threadOrchestrator = CreateOrchestrator();
             var msg = TestHelpers.CreateInboundMessage($"yes {runId}", "approve-1");
             var intent = TestHelpers.Parse(_parser, msg);
             barrier.SignalAndWait();
-            return threadOrchestrator.HandleInbound(msg, intent);
+            return await threadOrchestrator.HandleInboundAsync(msg, intent);
         });
 
-        var denyTask = Task.Run(() =>
+        var denyTask = Task.Run(async () =>
         {
             var threadOrchestrator = CreateOrchestrator();
             var msg = TestHelpers.CreateInboundMessage($"no {runId}", "deny-1");
             var intent = TestHelpers.Parse(_parser, msg);
             barrier.SignalAndWait();
-            return threadOrchestrator.HandleInbound(msg, intent);
+            return await threadOrchestrator.HandleInboundAsync(msg, intent);
         });
 
         Task.WaitAll(approveTask, denyTask);
 
         // Assert: run is in either Dispatching or Denied state (not both)
         var finalOrchestrator = CreateOrchestrator();
-        var timeline = finalOrchestrator.GetTimeline(runId);
+        var timeline = await finalOrchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.AnyOf(RunStatus.Dispatching, RunStatus.Denied, RunStatus.Running, RunStatus.Succeeded, RunStatus.Failed),
             "Run should be in a valid terminal-path state");
 

@@ -1,10 +1,12 @@
 using TextOps.Contracts.Execution;
 using TextOps.Contracts.Orchestration;
 
-namespace TextOps.Worker.Stub;
+namespace TextOps.Worker;
 
 /// <summary>
-/// Stub worker executor that simulates job execution and reports results to the orchestrator.
+/// Stub worker executor for development and testing.
+/// Simulates job execution with a 1-2 second delay.
+/// Replace with a real executor implementation for production.
 /// </summary>
 public sealed class StubWorkerExecutor : IWorkerExecutor
 {
@@ -18,14 +20,14 @@ public sealed class StubWorkerExecutor : IWorkerExecutor
 
     public async Task<OrchestratorResult> ExecuteAsync(ExecutionDispatch executionDispatch, CancellationToken cancellationToken)
     {
-        _orchestrator.OnExecutionStarted(executionDispatch.RunId, WorkerId);
+        await _orchestrator.OnExecutionStartedAsync(executionDispatch.RunId, WorkerId);
 
         await SimulateWork(cancellationToken);
 
         var success = DetermineSuccess(executionDispatch.JobKey);
         var executionSummary = CreateSummary(executionDispatch.JobKey, success);
 
-        var orchestratorResult = _orchestrator.OnExecutionCompleted(executionDispatch.RunId, WorkerId, success, executionSummary);
+        var orchestratorResult = await _orchestrator.OnExecutionCompletedAsync(executionDispatch.RunId, WorkerId, success, executionSummary);
 
         return orchestratorResult;
     }
@@ -37,14 +39,11 @@ public sealed class StubWorkerExecutor : IWorkerExecutor
     }
 
     private static bool DetermineSuccess(string jobKey)
-    {
-        return !jobKey.Contains("fail", StringComparison.OrdinalIgnoreCase);
-    }
+        => !jobKey.Contains("fail", StringComparison.OrdinalIgnoreCase);
 
     private static string CreateSummary(string jobKey, bool success)
-    {
-        return success
+        => success
             ? $"Job '{jobKey}' completed successfully"
             : $"Job '{jobKey}' failed (simulated failure)";
-    }
 }
+

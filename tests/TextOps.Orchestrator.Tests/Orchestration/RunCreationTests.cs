@@ -6,12 +6,12 @@ namespace TextOps.Orchestrator.Tests.Orchestration;
 public class RunCreationTests : OrchestratorTestBase
 {
     [Test]
-    public void HandleInbound_RunJob_CreatesRunWithAwaitingApprovalStatus()
+    public async Task HandleInbound_RunJob_CreatesRunWithAwaitingApprovalStatus()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -20,7 +20,7 @@ public class RunCreationTests : OrchestratorTestBase
             Assert.That(result.DispatchedExecution, Is.False);
         });
 
-        var timeline = Orchestrator.GetTimeline(result.RunId!);
+        var timeline = await Orchestrator.GetTimelineAsync(result.RunId!);
         Assert.Multiple(() =>
         {
             Assert.That(timeline.Run.JobKey, Is.EqualTo("demo"));
@@ -31,12 +31,12 @@ public class RunCreationTests : OrchestratorTestBase
     }
 
     [Test]
-    public void HandleInbound_RunJob_ReturnsApprovalPrompt()
+    public async Task HandleInbound_RunJob_ReturnsApprovalPrompt()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-prompt-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -51,14 +51,14 @@ public class RunCreationTests : OrchestratorTestBase
     }
 
     [Test]
-    public void HandleInbound_RunJob_AppendsRunCreatedAndApprovalRequestedEvents()
+    public async Task HandleInbound_RunJob_AppendsRunCreatedAndApprovalRequestedEvents()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-events-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
-        var timeline = Orchestrator.GetTimeline(result.RunId!);
+        var timeline = await Orchestrator.GetTimelineAsync(result.RunId!);
         Assert.Multiple(() =>
         {
             Assert.That(timeline.Events, Has.Count.EqualTo(2));
@@ -70,12 +70,12 @@ public class RunCreationTests : OrchestratorTestBase
     }
 
     [Test]
-    public void HandleInbound_RunJobWithMissingJobKey_ReturnsError()
+    public async Task HandleInbound_RunJobWithMissingJobKey_ReturnsError()
     {
         var msg = TestHelpers.CreateInboundMessage(body: "run", providerMessageId: $"create-error-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
         Assert.Multiple(() =>
         {

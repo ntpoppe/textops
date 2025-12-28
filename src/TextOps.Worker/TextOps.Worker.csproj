@@ -13,9 +13,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TextOps.Contracts\TextOps.Contracts.csproj" />
+    <ProjectReference Include="..\TextOps.Execution\TextOps.Execution.csproj" />
     <ProjectReference Include="..\TextOps.Persistence\TextOps.Persistence.csproj" />
     <ProjectReference Include="..\TextOps.Orchestrator\TextOps.Orchestrator.csproj" />
-    <ProjectReference Include="..\TextOps.Worker.Stub\TextOps.Worker.Stub.csproj" />
   </ItemGroup>
 
 </Project>

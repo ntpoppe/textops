@@ -155,9 +155,7 @@ public sealed class WorkerHostedService : BackgroundService
     }
 
     private bool ShouldMarkAsFailed(QueuedDispatch queuedDispatch)
-    {
-        return queuedDispatch.Attempts >= _options.MaxAttempts;
-    }
+        => queuedDispatch.Attempts >= _options.MaxAttempts;
 
     private async Task RunStaleLockRecoveryAsync(CancellationToken cancellationToken)
     {

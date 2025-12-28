@@ -3,8 +3,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
 using TextOps.Contracts.Execution;
+using TextOps.Execution;
 using TextOps.Persistence;
-using TextOps.Persistence.Queue;
 
 namespace TextOps.Persistence.Tests.Queue;
 

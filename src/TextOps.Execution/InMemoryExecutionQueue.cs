@@ -68,7 +68,5 @@ public sealed class InMemoryExecutionQueue : IExecutionQueue
     }
 
     public Task<int> ReclaimStaleAsync(TimeSpan lockTimeout, CancellationToken cancellationToken = default)
-    {
-        return Task.FromResult(0);
-    }
+        => Task.FromResult(0);
 }

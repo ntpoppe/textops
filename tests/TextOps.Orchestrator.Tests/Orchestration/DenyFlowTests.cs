@@ -7,38 +7,38 @@ public class DenyFlowTests : OrchestratorTestBase
 {
     private string _runId = null!;
 
-    public override void SetUp()
+    public override async Task SetUpAsync()
     {
-        base.SetUp();
+        await base.SetUpAsync();
 
         // Create a run first
         var createMsg = TestHelpers.CreateInboundMessage(body: "run demo", providerMessageId: $"create-{Guid.NewGuid()}");
         var createIntent = Parser.Parse(createMsg.Body);
-        var createResult = Orchestrator.HandleInbound(createMsg, createIntent);
+        var createResult = await Orchestrator.HandleInboundAsync(createMsg, createIntent);
         _runId = createResult.RunId!;
     }
 
     [Test]
-    public void HandleInbound_DenyWhenAwaitingApproval_TransitionsToDenied()
+    public async Task HandleInbound_DenyWhenAwaitingApproval_TransitionsToDenied()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"no {_runId}", providerMessageId: $"deny-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
-        var timeline = Orchestrator.GetTimeline(_runId);
+        var timeline = await Orchestrator.GetTimelineAsync(_runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Denied));
     }
 
     [Test]
-    public void HandleInbound_DenyWhenAwaitingApproval_EmitsRunDeniedEvent()
+    public async Task HandleInbound_DenyWhenAwaitingApproval_EmitsRunDeniedEvent()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"no {_runId}", providerMessageId: $"deny-event-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        Orchestrator.HandleInbound(msg, intent);
+        await Orchestrator.HandleInboundAsync(msg, intent);
 
-        var timeline = Orchestrator.GetTimeline(_runId);
+        var timeline = await Orchestrator.GetTimelineAsync(_runId);
         var denyEvent = timeline.Events.FirstOrDefault(e => e.Type == "RunDenied");
         Assert.Multiple(() =>
         {
@@ -48,12 +48,12 @@ public class DenyFlowTests : OrchestratorTestBase
     }
 
     [Test]
-    public void HandleInbound_DenyWhenAwaitingApproval_ReturnsDenialMessage()
+    public async Task HandleInbound_DenyWhenAwaitingApproval_ReturnsDenialMessage()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"no {_runId}", providerMessageId: $"deny-message-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
         Assert.Multiple(() =>
         {
@@ -66,14 +66,14 @@ public class DenyFlowTests : OrchestratorTestBase
     }
 
     [Test]
-    public void HandleInbound_DenyWithDenyKeyword_Works()
+    public async Task HandleInbound_DenyWithDenyKeyword_Works()
     {
         var msg = TestHelpers.CreateInboundMessage(body: $"deny {_runId}", providerMessageId: $"deny-keyword-{Guid.NewGuid()}");
         var intent = Parser.Parse(msg.Body);
 
-        var result = Orchestrator.HandleInbound(msg, intent);
+        var result = await Orchestrator.HandleInboundAsync(msg, intent);
 
-        var timeline = Orchestrator.GetTimeline(_runId);
+        var timeline = await Orchestrator.GetTimelineAsync(_runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Denied));
     }
 }

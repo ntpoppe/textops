@@ -22,6 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\TextOps.Execution\TextOps.Execution.csproj" />
     <ProjectReference Include="..\..\src\TextOps.Persistence\TextOps.Persistence.csproj" />
     <ProjectReference Include="..\..\src\TextOps.Contracts\TextOps.Contracts.csproj" />
     <ProjectReference Include="..\..\src\TextOps.Orchestrator\TextOps.Orchestrator.csproj" />

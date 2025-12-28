@@ -2,8 +2,8 @@ using TextOps.Contracts.Execution;
 using TextOps.Contracts.Intents;
 using TextOps.Contracts.Messaging;
 using TextOps.Contracts.Orchestration;
+using TextOps.Contracts.Persistence;
 using TextOps.Contracts.Runs;
-using TextOps.Persistence.Repositories;
 
 namespace TextOps.Orchestrator.Orchestration;
 
@@ -28,30 +28,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         _repository = repository;
     }
 
-    public OrchestratorResult HandleInbound(InboundMessage inboundMessage, ParsedIntent intent)
-    {
-        return HandleInboundAsync(inboundMessage, intent).GetAwaiter().GetResult();
-    }
-
-    public RunTimeline GetTimeline(string runId)
-    {
-        var timeline = _repository.GetTimelineAsync(runId).GetAwaiter().GetResult();
-        if (timeline == null)
-            throw new KeyNotFoundException($"Run not found: {runId}");
-        return timeline;
-    }
-
-    public OrchestratorResult OnExecutionStarted(string runId, string workerId)
-    {
-        return OnExecutionStartedAsync(runId, workerId).GetAwaiter().GetResult();
-    }
-
-    public OrchestratorResult OnExecutionCompleted(string runId, string workerId, bool success, string summary)
-    {
-        return OnExecutionCompletedAsync(runId, workerId, success, summary).GetAwaiter().GetResult();
-    }
-
-    private async Task<OrchestratorResult> HandleInboundAsync(InboundMessage inboundMessage, ParsedIntent intent)
+    public async Task<OrchestratorResult> HandleInboundAsync(InboundMessage inboundMessage, ParsedIntent intent)
     {
         if (await IsInboundDuplicate(inboundMessage))
         {
@@ -233,6 +210,14 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         return $"Denied run {updatedRun.RunId} for job \"{updatedRun.JobKey}\".";
     }
 
+    public async Task<RunTimeline> GetTimelineAsync(string runId)
+    {
+        var timeline = await _repository.GetTimelineAsync(runId);
+        if (timeline == null)
+            throw new KeyNotFoundException($"Run not found: {runId}");
+        return timeline;
+    }
+
     private async Task<OrchestratorResult> HandleStatusAsync(InboundMessage inboundMessage, ParsedIntent intent)
     {
         await _repository.MarkInboxProcessedAsync(inboundMessage.ChannelId, inboundMessage.ProviderMessageId, null);
@@ -270,7 +255,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         return CreateReplyMessage(inboundMessage, runId: null, messageBody);
     }
 
-    private async Task<OrchestratorResult> OnExecutionStartedAsync(string runId, string workerId)
+    public async Task<OrchestratorResult> OnExecutionStartedAsync(string runId, string workerId)
     {
         var run = await _repository.GetRunAsync(runId);
         if (run == null)
@@ -332,7 +317,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         return new OrchestratorResult(runId, new[] { errorMessage }, DispatchedExecution: false, Dispatch: null);
     }
 
-    private async Task<OrchestratorResult> OnExecutionCompletedAsync(string runId, string workerId, bool success, string summary)
+    public async Task<OrchestratorResult> OnExecutionCompletedAsync(string runId, string workerId, bool success, string summary)
     {
         var run = await _repository.GetRunAsync(runId);
         if (run == null)

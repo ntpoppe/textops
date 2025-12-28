@@ -4,13 +4,10 @@ using Microsoft.AspNetCore.Mvc;
 using TextOps.Contracts.Execution;
 using TextOps.Contracts.Orchestration;
 using TextOps.Contracts.Parsing;
-using TextOps.Execution;
 using TextOps.Orchestrator.Orchestration;
 using TextOps.Orchestrator.Parsing;
+using TextOps.Execution;
 using TextOps.Persistence;
-using TextOps.Persistence.Queue;
-using TextOps.Persistence.Repositories;
-using TextOps.Worker.Stub;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -78,29 +75,9 @@ static void ConfigureOrchestrator(IServiceCollection services)
 
 static string ConfigureExecutionQueue(IServiceCollection services, IConfiguration configuration)
 {
-    var queueProvider = configuration.GetValue<string>("Queue:Provider") ?? "InMemory";
-    
-    if (queueProvider.Equals("Database", StringComparison.OrdinalIgnoreCase))
-    {
-        services.AddScoped<IExecutionQueue, DatabaseExecutionQueue>();
-        services.AddScoped<IExecutionDispatcher>(sp => sp.GetRequiredService<IExecutionQueue>());
-    }
-    else
-    {
-        services.AddSingleton<InMemoryExecutionQueue>();
-        services.AddSingleton<IExecutionQueue>(sp => sp.GetRequiredService<InMemoryExecutionQueue>());
-        services.AddSingleton<IExecutionDispatcher>(sp => sp.GetRequiredService<InMemoryExecutionQueue>());
-        
-        services.AddScoped<IWorkerExecutor>(serviceProvider =>
-        {
-            var orchestrator = serviceProvider.GetRequiredService<IRunOrchestrator>();
-            return new StubWorkerExecutor(orchestrator);
-        });
-        
-        services.AddHostedService<ExecutionHostedService>();
-    }
-    
-    return queueProvider;
+    services.AddScoped<IExecutionQueue, DatabaseExecutionQueue>();
+    services.AddScoped<IExecutionDispatcher>(sp => sp.GetRequiredService<IExecutionQueue>());
+    return "Database";
 }
 
 static async Task ConfigureApplication(WebApplication app, string databaseConnectionString, string queueProvider)

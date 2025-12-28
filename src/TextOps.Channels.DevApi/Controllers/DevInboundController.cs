@@ -29,7 +29,7 @@ public sealed class DevInboundController : ControllerBase
     [HttpPost("inbound")]
     [ProducesResponseType(typeof(DevInboundResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
-    public IActionResult HandleInbound([FromBody] DevInboundRequest request)
+    public async Task<IActionResult> HandleInbound([FromBody] DevInboundRequest request)
     {
         if (!ModelState.IsValid)
         {
@@ -38,7 +38,7 @@ public sealed class DevInboundController : ControllerBase
 
         var providerMessageId = EnsureProviderMessageId(request.ProviderMessageId);
         var inboundMessage = BuildInboundMessage(request, providerMessageId);
-        var (parsedIntent, orchestratorResult) = ProcessInboundMessage(inboundMessage);
+        var (parsedIntent, orchestratorResult) = await ProcessInboundMessageAsync(inboundMessage);
         EnqueueDispatchIfPresent(orchestratorResult);
         var response = MapToResponse(parsedIntent, orchestratorResult);
 
@@ -74,10 +74,10 @@ public sealed class DevInboundController : ControllerBase
         );
     }
 
-    private (ParsedIntent Intent, OrchestratorResult Result) ProcessInboundMessage(InboundMessage inboundMessage)
+    private async Task<(ParsedIntent Intent, OrchestratorResult Result)> ProcessInboundMessageAsync(InboundMessage inboundMessage)
     {
         var parsedIntent = _parser.Parse(inboundMessage.Body);
-        var orchestratorResult = _orchestrator.HandleInbound(inboundMessage, parsedIntent);
+        var orchestratorResult = await _orchestrator.HandleInboundAsync(inboundMessage, parsedIntent);
         return (parsedIntent, orchestratorResult);
     }
 

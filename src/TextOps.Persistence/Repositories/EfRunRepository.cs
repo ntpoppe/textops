@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TextOps.Contracts.Orchestration;
+using TextOps.Contracts.Persistence;
 using TextOps.Contracts.Runs;
 using TextOps.Persistence.Entities;
 
@@ -18,10 +19,8 @@ public sealed class EntityFrameworkRunRepository : IRunRepository
     }
 
     public async Task<bool> IsInboxProcessedAsync(string channelId, string providerMessageId, CancellationToken cancellationToken = default)
-    {
-        return await _dbContext.InboxEntries
+        => await _dbContext.InboxEntries
             .AnyAsync(inboxEntry => inboxEntry.ChannelId == channelId && inboxEntry.ProviderMessageId == providerMessageId, cancellationToken);
-    }
 
     public async Task MarkInboxProcessedAsync(string channelId, string providerMessageId, string? runId, CancellationToken cancellationToken = default)
     {

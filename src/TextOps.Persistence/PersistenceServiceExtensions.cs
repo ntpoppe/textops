@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using TextOps.Contracts.Persistence;
 using TextOps.Persistence.Repositories;
 
 namespace TextOps.Persistence;
