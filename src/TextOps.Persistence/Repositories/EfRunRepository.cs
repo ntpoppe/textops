@@ -73,7 +73,6 @@ public sealed class EntityFrameworkRunRepository : IRunRepository
         }
         catch (DbUpdateConcurrencyException)
         {
-            // Another process updated the run concurrently
             return null;
         }
     }
@@ -123,7 +122,7 @@ public sealed class EntityFrameworkRunRepository : IRunRepository
             return null;
 
         var run = runEntity.ToRun();
-        // Order events in memory (SQLite doesn't support DateTimeOffset in ORDER BY)
+        // SQLite doesn't support DateTimeOffset in ORDER BY, so order in memory
         var runEvents = runEntity.Events
             .OrderBy(runEvent => runEvent.At)
             .ThenBy(runEvent => runEvent.Id)

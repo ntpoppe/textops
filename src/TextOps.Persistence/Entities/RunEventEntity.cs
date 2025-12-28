@@ -15,7 +15,6 @@ public sealed class RunEventEntity
     public string Actor { get; set; } = string.Empty;
     public string PayloadJson { get; set; } = "{}";
 
-    // Navigation property
     public RunEntity? Run { get; set; }
 
     public RunEvent ToRunEvent() => new(

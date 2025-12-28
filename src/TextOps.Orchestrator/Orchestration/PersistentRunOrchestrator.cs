@@ -30,7 +30,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
 
     public OrchestratorResult HandleInbound(InboundMessage inboundMessage, ParsedIntent intent)
     {
-        // Use synchronous wrapper for the interface (async operations internally)
         return HandleInboundAsync(inboundMessage, intent).GetAwaiter().GetResult();
     }
 
@@ -51,10 +50,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
     {
         return OnExecutionCompletedAsync(runId, workerId, success, summary).GetAwaiter().GetResult();
     }
-
-    // ------------------------
-    // Async Implementation
-    // ------------------------
 
     private async Task<OrchestratorResult> HandleInboundAsync(InboundMessage inboundMessage, ParsedIntent intent)
     {
@@ -275,10 +270,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         return CreateReplyMessage(inboundMessage, runId: null, messageBody);
     }
 
-    // ------------------------
-    // Execution Callbacks
-    // ------------------------
-
     private async Task<OrchestratorResult> OnExecutionStartedAsync(string runId, string workerId)
     {
         var run = await _repository.GetRunAsync(runId);
@@ -435,10 +426,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             IdempotencyKey: $"execution-completed:{runId}"
         );
     }
-
-    // ------------------------
-    // Helpers
-    // ------------------------
 
     private static OrchestratorResult CreateReplyMessage(InboundMessage inboundMessage, string? runId, string messageBody)
     {

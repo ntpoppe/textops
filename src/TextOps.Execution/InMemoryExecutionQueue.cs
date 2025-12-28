@@ -47,7 +47,6 @@ public sealed class InMemoryExecutionQueue : IExecutionQueue
         }
         catch (OperationCanceledException)
         {
-            // Normal cancellation
         }
         return null;
     }
@@ -62,7 +61,6 @@ public sealed class InMemoryExecutionQueue : IExecutionQueue
     {
         if (_processing.TryRemove(queueId, out var queuedDispatch))
         {
-            // Re-queue with incremented attempt count
             var requeuedDispatch = queuedDispatch with { Attempts = queuedDispatch.Attempts + 1 };
             _channel.Writer.TryWrite(requeuedDispatch);
         }
@@ -71,7 +69,6 @@ public sealed class InMemoryExecutionQueue : IExecutionQueue
 
     public Task<int> ReclaimStaleAsync(TimeSpan lockTimeout, CancellationToken cancellationToken = default)
     {
-        // In-memory queue doesn't have stale locks (entries are either in channel or processing dict)
         return Task.FromResult(0);
     }
 }

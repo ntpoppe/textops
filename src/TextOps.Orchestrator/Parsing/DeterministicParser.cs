@@ -25,23 +25,18 @@ namespace TextOps.Orchestrator.Parsing;
 /// </summary>
 public sealed class DeterministicIntentParser : IIntentParser
 {
-    // Matches commands like: "run nightly-backup" => job: nightly-backup
     private static readonly Regex RunRegex =
         new(@"^run\s+(?<job>[a-zA-Z0-9\-_]+)$", RegexOptions.IgnoreCase);
 
-    // Matches "run" without job key - orchestrator will validate and return error
     private static readonly Regex RunWithoutJobRegex =
         new(@"^run\s*$", RegexOptions.IgnoreCase);
 
-    // Matches commands like: "yes 8f3a" or "approve 123-abc" => run: 8f3a or 123-abc
     private static readonly Regex ApproveRegex =
         new(@"^(yes|approve)\s+(?<run>[a-zA-Z0-9\-_]+)$", RegexOptions.IgnoreCase);
 
-    // Matches commands like: "no 8f3a" or "deny 456-def" => run: 8f3a or 456-def
     private static readonly Regex DenyRegex =
         new(@"^(no|deny)\s+(?<run>[a-zA-Z0-9\-_]+)$", RegexOptions.IgnoreCase);
 
-    // Matches commands like: "status 884422" or "status run-321" => run: 884422 or run-321
     private static readonly Regex StatusRegex =
         new(@"^status\s+(?<run>[a-zA-Z0-9\-_]+)$", RegexOptions.IgnoreCase);
 
