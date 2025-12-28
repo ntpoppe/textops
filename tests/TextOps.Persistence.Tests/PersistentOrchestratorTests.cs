@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TextOps.Contracts.Execution;
 using TextOps.Contracts.Intents;
 using TextOps.Contracts.Messaging;
 using TextOps.Contracts.Runs;
@@ -24,7 +25,8 @@ public class PersistentOrchestratorTests
 
         _db = new TextOpsDbContext(options);
         _repo = new EntityFrameworkRunRepository(_db);
-        _orchestrator = new PersistentRunOrchestrator(_repo);
+        var executionQueue = new StubExecutionQueue();
+        _orchestrator = new PersistentRunOrchestrator(_repo, executionQueue);
     }
 
     [TearDown]
@@ -109,8 +111,7 @@ public class PersistentOrchestratorTests
 
         Assert.That(approveResult.RunId, Is.EqualTo(runId));
         Assert.That(approveResult.DispatchedExecution, Is.True);
-        Assert.That(approveResult.Dispatch, Is.Not.Null);
-        Assert.That(approveResult.Dispatch!.RunId, Is.EqualTo(runId));
+        Assert.That(approveResult.Dispatch, Is.Null);
 
         var timeline = await _orchestrator.GetTimelineAsync(runId);
         Assert.That(timeline.Run.Status, Is.EqualTo(RunStatus.Dispatching));
@@ -311,4 +312,22 @@ public class PersistentOrchestratorTests
 
         return runId;
     }
+}
+
+internal sealed class StubExecutionQueue : IExecutionQueue
+{
+    public Task EnqueueAsync(ExecutionDispatch dispatch, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task<QueuedDispatch?> ClaimNextAsync(string workerId, CancellationToken cancellationToken = default)
+        => Task.FromResult<QueuedDispatch?>(null);
+
+    public Task CompleteAsync(long queueId, bool success, string? errorMessage, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task ReleaseAsync(long queueId, string? errorMessage, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task<int> ReclaimStaleAsync(TimeSpan lockTimeout, CancellationToken cancellationToken = default)
+        => Task.FromResult(0);
 }

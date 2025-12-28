@@ -22,15 +22,17 @@ namespace TextOps.Orchestrator.Orchestration;
 public sealed class PersistentRunOrchestrator : IRunOrchestrator
 {
     private readonly IRunRepository _repository;
+    private readonly IExecutionQueue _executionQueue;
 
-    public PersistentRunOrchestrator(IRunRepository repository)
+    public PersistentRunOrchestrator(IRunRepository repository, IExecutionQueue executionQueue)
     {
         _repository = repository;
+        _executionQueue = executionQueue;
     }
 
     public async Task<OrchestratorResult> HandleInboundAsync(InboundMessage inboundMessage, ParsedIntent intent)
     {
-        if (await IsInboundDuplicate(inboundMessage))
+        if (await IsInboundDuplicateAsync(inboundMessage))
         {
             return CreateDuplicateInboundResult();
         }
@@ -38,24 +40,74 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         return await RouteByIntent(inboundMessage, intent);
     }
 
-    private async Task<bool> IsInboundDuplicate(InboundMessage inboundMessage)
+    public async Task<RunTimeline> GetTimelineAsync(string runId)
     {
-        return await _repository.IsInboxProcessedAsync(inboundMessage.ChannelId, inboundMessage.ProviderMessageId);
+        var timeline = await _repository.GetTimelineAsync(runId);
+        if (timeline == null)
+            throw new KeyNotFoundException($"Run not found: {runId}");
+        return timeline;
     }
 
-    private static OrchestratorResult CreateDuplicateInboundResult()
+    public async Task<OrchestratorResult> OnExecutionStartedAsync(string runId, string workerId)
     {
-        return new OrchestratorResult(
+        var run = await _repository.GetRunAsync(runId);
+        if (run == null)
+        {
+            return CreateUnknownRunStartError(runId);
+        }
+
+        var createdAt = DateTimeOffset.UtcNow;
+        var executionStartedEvents = CreateExecutionStartedEvent(runId, workerId, createdAt);
+
+        var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.Dispatching, RunStatus.Running, executionStartedEvents);
+
+        if (updatedRun == null)
+        {
+            return await HandleExecutionStartedError(runId, run);
+        }
+
+        return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
+    }
+
+    public async Task<OrchestratorResult> OnExecutionCompletedAsync(string runId, string workerId, bool success, string summary)
+    {
+        var run = await _repository.GetRunAsync(runId);
+        if (run == null)
+        {
+            return CreateUnknownRunCompletionError(runId);
+        }
+
+        var targetStatus = DetermineCompletionStatus(success);
+        var completionEvents = CreateCompletionEvent(runId, workerId, success, summary);
+
+        var updatedRun = await _repository.TryUpdateRunFromMultipleAsync(
+            runId,
+            new[] { RunStatus.Running, RunStatus.Dispatching },
+            targetStatus,
+            completionEvents);
+
+        if (updatedRun == null)
+        {
+            return await HandleCompletionError(runId, run);
+        }
+
+        var completionMessage = CreateCompletionMessage(runId, run, success, summary);
+        return new OrchestratorResult(runId, new[] { completionMessage }, DispatchedExecution: false, Dispatch: null);
+    }
+
+    private async Task<bool> IsInboundDuplicateAsync(InboundMessage inboundMessage)
+        => await _repository.IsInboxProcessedAsync(inboundMessage.ChannelId, inboundMessage.ProviderMessageId);
+
+    private static OrchestratorResult CreateDuplicateInboundResult()
+        => new OrchestratorResult(
             RunId: null,
             Outbound: Array.Empty<OutboundMessage>(),
             DispatchedExecution: false,
             Dispatch: null
         );
-    }
 
     private async Task<OrchestratorResult> RouteByIntent(InboundMessage inboundMessage, ParsedIntent intent)
-    {
-        return intent.Type switch
+        => intent.Type switch
         {
             IntentType.RunJob => await HandleRunJobAsync(inboundMessage, intent),
             IntentType.ApproveRun => await HandleApproveAsync(inboundMessage, intent),
@@ -63,7 +115,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
             IntentType.Status => await HandleStatusAsync(inboundMessage, intent),
             _ => await HandleUnknownAsync(inboundMessage)
         };
-    }
 
     private async Task<OrchestratorResult> HandleRunJobAsync(InboundMessage inboundMessage, ParsedIntent intent)
     {
@@ -83,40 +134,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
 
         var outboundMessage = CreateApprovalRequestMessage(inboundMessage, runId, run.JobKey);
         return new OrchestratorResult(runId, new[] { outboundMessage }, DispatchedExecution: false, Dispatch: null);
-    }
-
-    private static Run CreateRun(string runId, string jobKey, InboundMessage inboundMessage, DateTimeOffset createdAt)
-    {
-        return new Run(
-            RunId: runId,
-            JobKey: jobKey,
-            Status: RunStatus.AwaitingApproval,
-            CreatedAt: createdAt,
-            RequestedByAddress: inboundMessage.From.Value,
-            ChannelId: inboundMessage.ChannelId,
-            ConversationId: inboundMessage.Conversation.Value
-        );
-    }
-
-    private static RunEvent[] CreateRunCreationEvents(string runId, InboundMessage inboundMessage, DateTimeOffset createdAt, string jobKey)
-    {
-        return new[]
-        {
-            new RunEvent(runId, "RunCreated", createdAt, GetActorFromMessage(inboundMessage), new { JobKey = jobKey }),
-            new RunEvent(runId, "ApprovalRequested", createdAt, "system", new { Policy = "DefaultRequireApproval" })
-        };
-    }
-
-    private static OutboundMessage CreateApprovalRequestMessage(InboundMessage inboundMessage, string runId, string jobKey)
-    {
-        return new OutboundMessage(
-            ChannelId: inboundMessage.ChannelId,
-            Conversation: inboundMessage.Conversation,
-            To: null,
-            Body: $"Job \"{jobKey}\" is ready. Reply YES {runId} to approve or NO {runId} to deny.",
-            CorrelationId: runId,
-            IdempotencyKey: $"approval-request:{runId}"
-        );
     }
 
     private async Task<OrchestratorResult> HandleApproveAsync(InboundMessage inboundMessage, ParsedIntent intent)
@@ -145,28 +162,8 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
 
         var outboundMessage = CreateApprovalMessage(updatedRun);
         var executionDispatch = new ExecutionDispatch(updatedRun.RunId, updatedRun.JobKey);
-        return new OrchestratorResult(updatedRun.RunId, new[] { outboundMessage }, DispatchedExecution: true, Dispatch: executionDispatch);
-    }
-
-    private static RunEvent[] CreateApprovalEvents(string runId, InboundMessage inboundMessage, DateTimeOffset createdAt)
-    {
-        return new[]
-        {
-            new RunEvent(runId, "RunApproved", createdAt, GetActorFromMessage(inboundMessage), new { }),
-            new RunEvent(runId, "ExecutionDispatched", createdAt, "system", new { })
-        };
-    }
-
-    private static OutboundMessage CreateApprovalMessage(Run updatedRun)
-    {
-        return new OutboundMessage(
-            ChannelId: updatedRun.ChannelId,
-            Conversation: new ConversationId(updatedRun.ConversationId),
-            To: null,
-            Body: $"Approved. Starting run {updatedRun.RunId} for job \"{updatedRun.JobKey}\"…",
-            CorrelationId: updatedRun.RunId,
-            IdempotencyKey: $"approved-starting:{updatedRun.RunId}"
-        );
+        await _executionQueue.EnqueueAsync(executionDispatch);
+        return new OrchestratorResult(updatedRun.RunId, new[] { outboundMessage }, DispatchedExecution: true, Dispatch: null);
     }
 
     private async Task<OrchestratorResult> HandleDenyAsync(InboundMessage inboundMessage, ParsedIntent intent)
@@ -195,27 +192,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
 
         var denialMessage = CreateDenialMessage(updatedRun);
         return CreateReplyMessage(inboundMessage, runId: updatedRun.RunId, denialMessage);
-    }
-
-    private static RunEvent[] CreateDenialEvents(string runId, InboundMessage inboundMessage, DateTimeOffset createdAt)
-    {
-        return new[]
-        {
-            new RunEvent(runId, "RunDenied", createdAt, GetActorFromMessage(inboundMessage), new { })
-        };
-    }
-
-    private static string CreateDenialMessage(Run updatedRun)
-    {
-        return $"Denied run {updatedRun.RunId} for job \"{updatedRun.JobKey}\".";
-    }
-
-    public async Task<RunTimeline> GetTimelineAsync(string runId)
-    {
-        var timeline = await _repository.GetTimelineAsync(runId);
-        if (timeline == null)
-            throw new KeyNotFoundException($"Run not found: {runId}");
-        return timeline;
     }
 
     private async Task<OrchestratorResult> HandleStatusAsync(InboundMessage inboundMessage, ParsedIntent intent)
@@ -255,27 +231,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         return CreateReplyMessage(inboundMessage, runId: null, messageBody);
     }
 
-    public async Task<OrchestratorResult> OnExecutionStartedAsync(string runId, string workerId)
-    {
-        var run = await _repository.GetRunAsync(runId);
-        if (run == null)
-        {
-            return CreateUnknownRunStartError(runId);
-        }
-
-        var createdAt = DateTimeOffset.UtcNow;
-        var executionStartedEvents = CreateExecutionStartedEvent(runId, workerId, createdAt);
-
-        var updatedRun = await _repository.TryUpdateRunAsync(runId, RunStatus.Dispatching, RunStatus.Running, executionStartedEvents);
-
-        if (updatedRun == null)
-        {
-            return await HandleExecutionStartedError(runId, run);
-        }
-
-        return new OrchestratorResult(runId, Array.Empty<OutboundMessage>(), DispatchedExecution: false, Dispatch: null);
-    }
-
     private static OrchestratorResult CreateUnknownRunStartError(string runId)
     {
         var errorMessage = new OutboundMessage(
@@ -290,12 +245,10 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
     }
 
     private static RunEvent[] CreateExecutionStartedEvent(string runId, string workerId, DateTimeOffset createdAt)
-    {
-        return new[]
+        => new[]
         {
             new RunEvent(runId, "ExecutionStarted", createdAt, $"worker:{workerId}", new { WorkerId = workerId })
         };
-    }
 
     private async Task<OrchestratorResult> HandleExecutionStartedError(string runId, Run run)
     {
@@ -317,32 +270,6 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         return new OrchestratorResult(runId, new[] { errorMessage }, DispatchedExecution: false, Dispatch: null);
     }
 
-    public async Task<OrchestratorResult> OnExecutionCompletedAsync(string runId, string workerId, bool success, string summary)
-    {
-        var run = await _repository.GetRunAsync(runId);
-        if (run == null)
-        {
-            return CreateUnknownRunCompletionError(runId);
-        }
-
-        var targetStatus = DetermineCompletionStatus(success);
-        var completionEvents = CreateCompletionEvent(runId, workerId, success, summary);
-
-        var updatedRun = await _repository.TryUpdateRunFromMultipleAsync(
-            runId,
-            new[] { RunStatus.Running, RunStatus.Dispatching },
-            targetStatus,
-            completionEvents);
-
-        if (updatedRun == null)
-        {
-            return await HandleCompletionError(runId, run);
-        }
-
-        var completionMessage = CreateCompletionMessage(runId, run, success, summary);
-        return new OrchestratorResult(runId, new[] { completionMessage }, DispatchedExecution: false, Dispatch: null);
-    }
-
     private static OrchestratorResult CreateUnknownRunCompletionError(string runId)
     {
         var errorMessage = new OutboundMessage(
@@ -357,9 +284,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
     }
 
     private static RunStatus DetermineCompletionStatus(bool success)
-    {
-        return success ? RunStatus.Succeeded : RunStatus.Failed;
-    }
+        => success ? RunStatus.Succeeded : RunStatus.Failed;
 
     private static RunEvent[] CreateCompletionEvent(string runId, string workerId, bool success, string summary)
     {
@@ -392,9 +317,7 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
     }
 
     private static bool IsTerminalState(RunStatus? status)
-    {
-        return status == RunStatus.Succeeded || status == RunStatus.Failed;
-    }
+        => status == RunStatus.Succeeded || status == RunStatus.Failed;
 
     private static OutboundMessage CreateCompletionMessage(string runId, Run run, bool success, string summary)
     {
@@ -412,6 +335,49 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         );
     }
 
+    private static RunEvent[] CreateRunCreationEvents(string runId, InboundMessage inboundMessage, DateTimeOffset createdAt, string jobKey)
+        => new[]
+        {
+            new RunEvent(runId, "RunCreated", createdAt, GetActorFromMessage(inboundMessage), new { JobKey = jobKey }),
+            new RunEvent(runId, "ApprovalRequested", createdAt, "system", new { Policy = "DefaultRequireApproval" })
+        };
+
+    private static RunEvent[] CreateApprovalEvents(string runId, InboundMessage inboundMessage, DateTimeOffset createdAt)
+        => new[]
+        {
+            new RunEvent(runId, "RunApproved", createdAt, GetActorFromMessage(inboundMessage), new { }),
+            new RunEvent(runId, "ExecutionDispatched", createdAt, "system", new { })
+        };
+
+    private static RunEvent[] CreateDenialEvents(string runId, InboundMessage inboundMessage, DateTimeOffset createdAt)
+        => new[]
+        {
+            new RunEvent(runId, "RunDenied", createdAt, GetActorFromMessage(inboundMessage), new { })
+        };
+
+    private static OutboundMessage CreateApprovalRequestMessage(InboundMessage inboundMessage, string runId, string jobKey)
+        => new OutboundMessage(
+            ChannelId: inboundMessage.ChannelId,
+            Conversation: inboundMessage.Conversation,
+            To: null,
+            Body: $"Job \"{jobKey}\" is ready. Reply YES {runId} to approve or NO {runId} to deny.",
+            CorrelationId: runId,
+            IdempotencyKey: $"approval-request:{runId}"
+        );
+
+    private static OutboundMessage CreateApprovalMessage(Run updatedRun)
+        => new OutboundMessage(
+            ChannelId: updatedRun.ChannelId,
+            Conversation: new ConversationId(updatedRun.ConversationId),
+            To: null,
+            Body: $"Approved. Starting run {updatedRun.RunId} for job \"{updatedRun.JobKey}\"…",
+            CorrelationId: updatedRun.RunId,
+            IdempotencyKey: $"approved-starting:{updatedRun.RunId}"
+        );
+
+    private static string CreateDenialMessage(Run updatedRun)
+        => $"Denied run {updatedRun.RunId} for job \"{updatedRun.JobKey}\".";
+
     private static OrchestratorResult CreateReplyMessage(InboundMessage inboundMessage, string? runId, string messageBody)
     {
         var outboundMessage = new OutboundMessage(
@@ -426,11 +392,19 @@ public sealed class PersistentRunOrchestrator : IRunOrchestrator
         return new OrchestratorResult(runId, new[] { outboundMessage }, DispatchedExecution: false, Dispatch: null);
     }
 
+    private static Run CreateRun(string runId, string jobKey, InboundMessage inboundMessage, DateTimeOffset createdAt)
+        => new Run(
+            RunId: runId,
+            JobKey: jobKey,
+            Status: RunStatus.AwaitingApproval,
+            CreatedAt: createdAt,
+            RequestedByAddress: inboundMessage.From.Value,
+            ChannelId: inboundMessage.ChannelId,
+            ConversationId: inboundMessage.Conversation.Value
+        );
+
     private static string GetActorFromMessage(InboundMessage inboundMessage) => $"user:{inboundMessage.From.Value}";
 
     private static string GenerateRunId()
-    {
-        return Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
-    }
+        => Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
 }
-

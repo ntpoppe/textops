@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TextOps.Contracts.Execution;
 using TextOps.Contracts.Orchestration;
 using TextOps.Contracts.Parsing;
 using TextOps.Orchestrator.Orchestration;
@@ -26,7 +27,8 @@ public abstract class OrchestratorTestBase
 
         Db = new TextOpsDbContext(options);
         var repository = new EntityFrameworkRunRepository(Db);
-        Orchestrator = new PersistentRunOrchestrator(repository);
+        var executionQueue = new StubExecutionQueue();
+        Orchestrator = new PersistentRunOrchestrator(repository, executionQueue);
         Parser = new DeterministicIntentParser();
         return Task.CompletedTask;
     }
@@ -36,5 +38,23 @@ public abstract class OrchestratorTestBase
     {
         Db.Dispose();
     }
+}
+
+internal sealed class StubExecutionQueue : IExecutionQueue
+{
+    public Task EnqueueAsync(ExecutionDispatch dispatch, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task<QueuedDispatch?> ClaimNextAsync(string workerId, CancellationToken cancellationToken = default)
+        => Task.FromResult<QueuedDispatch?>(null);
+
+    public Task CompleteAsync(long queueId, bool success, string? errorMessage, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task ReleaseAsync(long queueId, string? errorMessage, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task<int> ReclaimStaleAsync(TimeSpan lockTimeout, CancellationToken cancellationToken = default)
+        => Task.FromResult(0);
 }
 
