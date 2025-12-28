@@ -54,7 +54,8 @@ public sealed class ConcurrencyTests
     {
         var db = new TextOpsDbContext(_dbOptions);
         var repository = new EntityFrameworkRunRepository(db);
-        return new PersistentRunOrchestrator(repository);
+        var executionQueue = new StubExecutionQueue();
+        return new PersistentRunOrchestrator(repository, executionQueue);
     }
 
     [Test]

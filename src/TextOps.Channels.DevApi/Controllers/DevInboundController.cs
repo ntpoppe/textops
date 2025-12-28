@@ -14,16 +14,13 @@ public sealed class DevInboundController : ControllerBase
 {
     private readonly IIntentParser _parser;
     private readonly IRunOrchestrator _orchestrator;
-    private readonly IExecutionQueue _executionQueue;
 
     public DevInboundController(
         IIntentParser parser,
-        IRunOrchestrator orchestrator,
-        IExecutionQueue executionQueue)
+        IRunOrchestrator orchestrator)
     {
         _parser = parser;
         _orchestrator = orchestrator;
-        _executionQueue = executionQueue;
     }
 
     [HttpPost("inbound")]
@@ -39,7 +36,6 @@ public sealed class DevInboundController : ControllerBase
         var providerMessageId = EnsureProviderMessageId(request.ProviderMessageId);
         var inboundMessage = BuildInboundMessage(request, providerMessageId);
         var (parsedIntent, orchestratorResult) = await ProcessInboundMessageAsync(inboundMessage);
-        await EnqueueDispatchIfPresentAsync(orchestratorResult);
         var response = MapToResponse(parsedIntent, orchestratorResult);
 
         return Ok(response);
@@ -79,14 +75,6 @@ public sealed class DevInboundController : ControllerBase
         var parsedIntent = _parser.Parse(inboundMessage.Body);
         var orchestratorResult = await _orchestrator.HandleInboundAsync(inboundMessage, parsedIntent);
         return (parsedIntent, orchestratorResult);
-    }
-
-    private async Task EnqueueDispatchIfPresentAsync(OrchestratorResult orchestratorResult)
-    {
-        if (orchestratorResult.Dispatch != null)
-        {
-            await _executionQueue.EnqueueAsync(orchestratorResult.Dispatch);
-        }
     }
 
     private static DevInboundResponse MapToResponse(ParsedIntent parsedIntent, OrchestratorResult orchestratorResult)
